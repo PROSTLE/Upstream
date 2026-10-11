@@ -1,0 +1,26 @@
+{
+  "name": "upstream",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Usage-honest, agent-funded open-source payments: evidence from AI coding sessions, LLM attribution under deterministic checks, PayPal Payouts to verified maintainers.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "workspaces": [
+    "server",
+    "web",
+    "mcp"
+  ],
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build -w web",
+    "start": "npm run start -w server",
+    "setup:paypal": "npm run setup:paypal -w server",
+    "doctor": "npm run doctor -w server",
+    "hook:install": "node hook/install.mjs",
+    "test": "npm test -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web && npm run typecheck -w mcp"
+  }
+}

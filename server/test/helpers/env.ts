@@ -1,0 +1,23 @@
+// Test-only configuration. Imported first by tests so config.ts validates against it.
+Object.assign(process.env, {
+  PUBLIC_BASE_URL: "http://localhost:8787",
+  PAYPAL_CLIENT_ID: "test-client",
+  PAYPAL_CLIENT_SECRET: "test-secret",
+  PAYPAL_WEBHOOK_ID: "WH-TEST-123",
+  TITHE_AMOUNT: "10.00",
+  TITHE_CURRENCY: "USD",
+  TITHE_INTERVAL_UNIT: "MONTH",
+  TITHE_PRODUCT_NAME: "Test tithe",
+  BRAND_NAME: "Upstream",
+  POLICY_MAX_PACKAGE_SHARE: "0.6",
+  POLICY_MIN_PAYOUT: "1.00",
+  POLICY_MAX_PAYOUT: "250.00",
+  POLICY_PAYOUT_FEE_RESERVE: "0.02",
+  POLICY_RESERVE_DAYS: "60",
+  POLICY_CANCEL_UNCLAIMED_AFTER_DAYS: "7",
+  UPSTREAM_MODEL: "claude-opus-5-5",
+  UPSTREAM_EFFORT: "medium",
+  DEPSDEV_API_BASE: "https://api.deps.dev/v3",
+  ECOSYSTEMS_API_BASE: "https://packages.ecosyste.ms/api/v1",
+  METADATA_CACHE_HOURS: "24",
+});

@@ -1,0 +1,74 @@
+# Render Blueprint for Upstream (https://render.com/docs/blueprint-spec).
+# SQLite lives on a persistent disk, which needs a paid instance type; the free plan has no disk.
+services:
+  - type: web
+    name: upstream
+    runtime: node
+    plan: 0.5c-512mb
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    disk:
+      name: upstream-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: DATABASE_PATH
+        value: /var/data/upstream.db
+      # Set to this service's https URL after the first deploy (PayPal webhooks and OAuth redirects use it).
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: INGEST_TOKEN
+        generateValue: true
+      - key: PAYPAL_ENV
+        value: sandbox
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: UPSTREAM_MODEL
+        value: claude-opus-5-5
+      - key: UPSTREAM_EFFORT
+        value: medium
+      - key: TITHE_AMOUNT
+        value: "10.00"
+      - key: TITHE_CURRENCY
+        value: USD
+      - key: TITHE_INTERVAL_UNIT
+        value: MONTH
+      - key: TITHE_PRODUCT_NAME
+        value: Upstream agent tithe
+      - key: BRAND_NAME
+        value: Upstream
+      - key: PAYOUT_EMAIL_SUBJECT
+        value: You received an Upstream payout for your open-source work
+      - key: POLICY_MAX_PACKAGE_SHARE
+        value: "0.4"
+      - key: POLICY_MIN_PAYOUT
+        value: "1.00"
+      - key: POLICY_MAX_PAYOUT
+        value: "250.00"
+      - key: POLICY_PAYOUT_FEE_RESERVE
+        value: "0.02"
+      - key: POLICY_RESERVE_DAYS
+        value: "60"
+      - key: POLICY_CANCEL_UNCLAIMED_AFTER_DAYS
+        value: "7"
+      - key: DEPSDEV_API_BASE
+        value: https://api.deps.dev/v3
+      - key: ECOSYSTEMS_API_BASE
+        value: https://packages.ecosyste.ms/api/v1
+      - key: METADATA_CACHE_HOURS
+        value: "24"
