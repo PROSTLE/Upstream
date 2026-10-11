@@ -4,7 +4,7 @@
 **Deadline:** Thu **Nov 12, 2026, 12:00 pm PT** (= Nov 13, 1:30 am IST), from the official rules
 **Status date:** Oct 11, 2026 (second pass the same day; see section 5a)
 
-**Short version:** the product is built, tested offline, and documented. Nothing has run against the live PayPal sandbox or Claude yet, because this machine has no credentials. That first real run is the most important step left.
+**Short version:** the product is built, tested offline (18/18), documented, and committed to a local git repo. A second pass found and fixed a bug that silently broke Python package mapping on this machine, plus a related security issue (section 5a). It also added `npm run doctor` to check every credential live. Nothing has run against the live PayPal sandbox or Claude yet, because this machine still has no credentials. That first real run is the most important step left, and it's blocked on section 6A.
 
 ---
 
@@ -46,6 +46,9 @@ Every claim the build relies on was checked against a primary source (PayPal's p
 | Context7 tools: `resolve-library-id(libraryName, query)`, `query-docs(libraryId, query)` | upstash/context7 README |
 | ATTRIBUTION.md exists (v0.1 draft, stars only, no money) | attribution.md, GitHub |
 | Render Blueprint `disk` = `name`, `mountPath`, `sizeGB` | Render's official `render.yaml.json` schema |
+| Subscriptions "List plans" is `GET /v1/billing/plans` (used by `npm run doctor` with no query parameters, since none are documented on that page) | developer.paypal.com Subscriptions v1 reference (checked Oct 11) |
+| Claude request shape in `attribution/llm.ts` (`beta.messages.parse`, `server-side-fallback-2026-07-01` + `fallbacks: "default"`, `output_config.effort`/`format`, model `claude-opus-5-5`, default effort `medium`) | Current Claude API reference (checked Oct 11) |
+| Claude Code hook budgets set by the installer: SessionStart 10 s, SessionEnd 5 s, PostToolUse and Stop async | `hook/install.mjs` |
 
 ### Corrections to the two earlier AI reports
 
@@ -96,9 +99,10 @@ c:\Lang\paypal
 | AI | `attribution/llm.ts`, `validate.ts`, `baseline.ts`, `run.ts`, `eval.ts` | Claude structured output with citations; validator rules; import-count baseline; divergence flags; eval (precision / recall / F1 / accuracy / L1) on human labels |
 | Claims | `claims.ts` | GitHub OAuth + admin/maintain check, or FUNDING.yml token; one payable claim per repo; public token can't change the payout email |
 | API + jobs | `index.ts`, `scripts/setup-paypal.ts` | REST API, admin-token guard, ingest-token guard, hourly reconciler + unclaimed auto-cancel, serves the built UI |
+| Preflight | `scripts/doctor.ts` | `npm run doctor`: live, read-only checks of PayPal, Claude, GitHub, deps.dev, ecosyste.ms and the public URL; exits non-zero on any failure |
 
 ### Hook (`hook/`)
-- `upstream-hook.mjs`: never blocks the agent (async, always exits 0). Redacts secret files, sends only the path for reads of your own files, attaches the file head for import context, snapshots manifests at start and stop, and spools offline.
+- `upstream-hook.mjs`: never blocks the agent (async, always exits 0). Redacts secret files, sends only the path for reads of your own files, attaches the file head for import context, snapshots manifests at start and stop, and spools offline. Builds the Python import → distribution map with the project's `.venv` when present. The map is cached per interpreter, refreshed on `Stop` after mid-session installs, and computed without the project directory on `sys.path`.
 - `install.mjs`: merges hooks into `.claude/settings.json` (project or user scope) and optionally registers the MCP server.
 
 ### MCP server (`mcp/`)
@@ -160,13 +164,17 @@ Pages: Overview (stats, money-flow diagram, checklist, PayPal activity) · Fundi
 | 2 | Sandbox personal account | Developer Dashboard → Sandbox accounts → create **Personal** (pays the subscription, receives a payout) | 5 min |
 | 3 | Anthropic API key | console.anthropic.com → `ANTHROPIC_API_KEY` | 5 min |
 | 4 | GitHub OAuth app | GitHub → Settings → Developer settings → OAuth Apps; callback `PUBLIC_BASE_URL/api/claims/github/callback` | 5 min |
-| 5 | Public https URL | Render (`render.yaml`, paid instance for the disk) **or** `cloudflared tunnel --url http://localhost:8787` for local | 15–30 min |
+| 5 | Public https URL | Render (`render.yaml`, paid instance for the disk) **or** `cloudflared tunnel --url http://localhost:8787` for local (`cloudflared` is not installed on this machine yet) | 15–30 min |
 | 6 | Create `.env` | `cp .env.example .env`; generate `ADMIN_TOKEN` and `INGEST_TOKEN` (32+ random characters) | 5 min |
 | 6b | GitHub token (recommended) | Fine-grained personal access token with public read access → `GITHUB_TOKEN`. Anonymous access is 60 requests/hour. | 3 min |
 | 7 | Check + PayPal setup | `npm run doctor` (should show no FAIL), then `npm run build && npm run setup:paypal && npm start` | 5 min |
+| 8 | Public GitHub repo | Create an empty **public** repo and share its URL so the local commit can be pushed | 2 min |
+
+Put keys in `.env` yourself (it's git-ignored) rather than pasting them into chat. Once they're there, steps 7 onward and all of section B can run.
 
 ### B. First real end-to-end run (highest priority, as soon as A is done)
 
+- [ ] `npm run doctor` shows no FAIL (confirms the PayPal app, Claude key + model, GitHub token)
 - [ ] Approve the subscription in the sandbox → *Sync from PayPal* → confirm gross and fee in the ledger
 - [ ] Install the hook in a real project → do a **real** Claude Code session → confirm events arrive
 - [ ] *Attribute with Claude*: first live call. Watch for a schema or `fallbacks` error from `client.beta.messages.parse` (typechecked but never called live)
@@ -207,6 +215,7 @@ Pages: Overview (stats, money-flow diagram, checklist, PayPal activity) · Fundi
 
 | Window | Focus |
 |---|---|
+| Oct 11 ✓ | Offline hardening: Python map bug + security fix, `npm run doctor`, hook test, local git commit |
 | Oct 11–15 | Section A + B: first live sandbox run, fix anything it reveals |
 | Oct 16–25 | Section C: real sessions, labels, eval; prompt tuning against the eval only |
 | Oct 26–Nov 2 | Deploy on Render, end-to-end on the hosted URL, polish |
