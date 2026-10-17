@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -59,6 +60,15 @@ for (const [event, groups] of Object.entries(wanted)) {
 fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + "\n");
 console.log(`Upstream hooks installed in ${settingsFile}`);
 console.log(`Events go to ${url} (config in ${path.join(home, "config.json")})`);
+
+// Computing Python's import -> distribution map can take several seconds; do it once now.
+try {
+  const warmDir = flag("user") ? process.cwd() : path.resolve(opt("project") ?? process.cwd());
+  const out = execFileSync(process.execPath, [hookScript, "--warm-python", warmDir], { timeout: 150_000 });
+  console.log(out.toString("utf8").trim());
+} catch {
+  console.log("Python import map not pre-computed; the hook will compute it during the first session.");
+}
 
 if (flag("with-mcp")) {
   const mcpFile = flag("user") ? null : path.join(path.dirname(path.dirname(settingsFile)), ".mcp.json");

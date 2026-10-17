@@ -2,9 +2,11 @@
 
 **Project:** Upstream, an entry for *Build What's Next with PayPal and AI* (Devpost)
 **Deadline:** Thu **Nov 12, 2026, 12:00 pm PT** (= Nov 13, 1:30 am IST), from the official rules
-**Status date:** Oct 11, 2026 (second pass the same day; see section 5a)
+**Status date:** Oct 18, 2026 (third pass; see section 5b)
 
 **Short version:** the product is built, tested offline (18/18), documented, and committed to a local git repo. A second pass found and fixed a bug that silently broke Python package mapping on this machine, plus a related security issue (section 5a). It also added `npm run doctor` to check every credential live. Nothing has run against the live PayPal sandbox or Claude yet, because this machine still has no credentials. That first real run is the most important step left, and it's blocked on section 6A.
+
+**Oct 18 update:** still no `.env` on this machine, so the live run is now a week behind the plan. A re-verification pass (section 5b) re-checked the rules, PayPal docs and novelty online, found one funding-reconciliation gap and a flaky test, and fixed both plus four smaller accuracy issues. Tests are 18/18 again (they were 17/18 under load). Later the same day: blind labelling for the eval, two label bugs fixed, `.env` created with generated tokens; tests now 20/20.
 
 ---
 
@@ -32,6 +34,15 @@ Every claim the build relies on was checked against a primary source (PayPal's p
 | A project can win at most 1 grand or honorable-mention prize + 1 sponsor prize | Devpost official rules |
 | Repo must be public with a visible license; video under 3 minutes on YouTube; judges may score from video and text alone | Devpost official rules |
 | Project must stay available free until judging ends | Devpost official rules |
+| Judging: 5 **equally weighted** criteria: Technological Implementation, Design, Potential Impact, Innovation/Idea, Presentation. Judging may use "automated AI-driven analysis" | Devpost page + official rules (checked Oct 18) |
+| Honorable mentions ($5,000 each): Most Creative, Most Impactful, Best Demo Delivery, Best Use of PayPal + AI, **Best Use of Agentic Commerce** | Devpost page (checked Oct 18) |
+| Testing access must include "any test account credentials, API keys, or sandbox login details" needed to run it; a hosted URL or full setup instructions both qualify | Official rules, Testing section |
+| 16,199 registered participants on Oct 18; project gallery not public yet | Devpost page |
+| Webhook event list re-checked: the 11 payout events and 7 `BILLING.SUBSCRIPTION.*` events match the code exactly; Subscriptions also list `PAYMENT.SALE.REFUNDED` / `REVERSED` | developer.paypal.com event names (checked Oct 18) |
+| Subscription transaction `status` enum: COMPLETED, DECLINED, PARTIALLY_REFUNDED, PENDING, REFUNDED, FAILED | Subscriptions `schema.json` (checked Oct 18) |
+| Agent Toolkit still has **no Payouts tool** (43 tools: invoices, payments, disputes, shipment tracking, catalog, subscriptions, reporting) | `paypal/agent-toolkit` README (checked Oct 18) |
+| Novelty: no product, repo or announced program found that pays maintainers from AI-agent usage evidence. Closest: Anthropic's Claude for Open Source (free Claude Max for maintainers, not payments); ATTRIBUTION.md v0.1 (stars only) | Web + GitHub search (Oct 18) |
+| ecosyste.ms Funds is live and allocates by dependency usage (10% fee); StackAid's site returns HTTP 402 and has no news since 2023, so it's cited as "launched 2022" | funds.ecosyste.ms, stackaid.us (Oct 18) |
 | Payouts: `sender_batch_id` reuse within 30 days is rejected; 5xx retries with the same id are safe; max 15,000 items; `page_size` max 1000 | PayPal Payouts `schema.json` |
 | Payout item statuses: SUCCESS, FAILED, PENDING, UNCLAIMED, RETURNED, ONHOLD, BLOCKED, REFUNDED, REVERSED | PayPal Payouts `schema.json` |
 | Cancel endpoint `POST /v1/payments/payouts-item/{id}/cancel`, UNCLAIMED items only; unclaimed payouts otherwise return after 30 days | PayPal "Cancel or reverse payouts" doc |
@@ -132,7 +143,7 @@ Pages: Overview (stats, money-flow diagram, checklist, PayPal activity) · Fundi
 
 | Check | Result |
 |---|---|
-| Unit and integration tests (`npm test`) | **18/18 pass**: the real hook script (Python import map, `json.py` shadowing, Stop resend rule), parsers, evidence extraction, ingest → candidates pipeline, webhook raw-body verification, validator, baseline, money math, end-to-end settlement (execute twice = 1 POST, replay rejected, UNCLAIMED → cancel → returned → re-held) |
+| Unit and integration tests (`npm test`) | **20/20 pass** (18 on Oct 11, plus 2 eval tests on Oct 18): the real hook script (Python import map, `json.py` shadowing, Stop resend rule), parsers, evidence extraction, ingest → candidates pipeline, webhook raw-body verification, validator, baseline, money math, end-to-end settlement (execute twice = 1 POST, replay rejected, UNCLAIMED → cancel → returned → re-held) |
 | Typecheck (server, web, mcp) | Clean |
 | Production build | Clean; pages code-split (main chunk about 288 KB; AG Grid/Charts load only on data pages) |
 | Smoke run | Real server + real hook script + live deps.dev / ecosyste.ms / GitHub. Events were **simulated**: Claude Code-shaped payloads piped through the hook, not a real Claude Code session. Evidence, candidates, docs linking, redaction (`.env` never stored), admin guard and baseline all worked. |
@@ -152,6 +163,25 @@ Pages: Overview (stats, money-flow diagram, checklist, PayPal activity) · Fundi
 | Anonymous GitHub API had **1 of 60** requests left this hour on this machine | doctor output | Doctor warns when `GITHUB_TOKEN` is unset; README now recommends one. |
 | Claude call shape | Checked against the current Claude API reference: `client.beta.messages.parse` + `betas: ["server-side-fallback-2026-07-01"]` + `fallbacks: "default"` + `output_config.effort`/`format` is the documented form for `claude-opus-5-5` | No change needed. Still not run live (no key). |
 
+### 5b. Third pass (Oct 18): re-verification
+
+| Finding | Evidence | Fix |
+|---|---|---|
+| **Funding could be overstated after a refund.** The hourly job only reconciled payout batches; it never re-read subscription transactions, and `PAYMENT.SALE.REFUNDED` / `REVERSED` weren't subscribed. A refund would stay in the pool until someone clicked Sync, so a payout could be planned from returned money. The README also claimed the reconciler covered funding. | `housekeeping()` in `settlement.ts`; `SUBSCRIBED_EVENTS` in `webhooks.ts` | New `syncKnownSubscriptions()` in `funding.ts`, called by `housekeeping()` and by the three `PAYMENT.SALE.*` events (failures still return non-2xx so PayPal retries). The two documented refund events are subscribed; `setup:paypal` already patches an existing webhook. |
+| **Hook test failed under load (17/18).** A cold `packages_distributions()` took 7.5 s once on this machine (4.3 s warm), against SessionStart's 8 s budget. The product was fine (Stop recovers the map and candidates are built at read time), but the test asserted SessionStart only. | `npm test` failure; 3 timed runs | `install.mjs` pre-computes the map (`upstream-hook.mjs --warm-python <dir>`). The test now asserts the real contract: the map is sent exactly once (SessionStart, or else the first Stop), never resent unchanged, and SessionStart carries it once the cache is warm. 18/18 in three consecutive full runs. |
+| README said the dayjs/lodash example came "from a real run" | Section 5: those smoke-test events were simulated | Reworded to say they were Claude Code-shaped events through the real hook and server. |
+| Connect page hardcoded `localhost:5173 → localhost:8787` | `Connect.tsx` | `/api/overview` now returns `public_base_url`; the install command uses it. |
+| Eval chart drew an undefined metric (e.g. precision with no positive predictions) as **0%** | `Eval.tsx` | Undefined metrics are left out of the chart (the table already showed "—"). |
+| Demo script promised outcomes before any live run ("react … gets nothing", "Claude catches it", "to the cent") | `docs/DEMO.md` | Narration now describes only what the recorded run shows. |
+| Claude call shape re-checked against the current API reference | `attribution/llm.ts`, SDK 0.133.0 | No change needed. Still not run live. |
+| Mock/hardcoded data sweep (server, web, mcp, hook) | grep for mock/fake/sample/seed/placeholders, literal URLs and amounts | Clean. Fake data exists only in `server/test`; every amount, policy and URL comes from `.env` or PayPal. |
+
+**Blind labelling (done, Oct 18):** labels entered after seeing Claude's and the baseline's weights could bias the eval. The server now marks a session's labels **blind** when every label was last changed before the session's first attribution run (`labelsAreBlind()` in `eval.ts`, from stored timestamps, not UI state). The Eval page has *All labelled / Blind only*, each session shows its status, and the session page asks you to label before attributing. Two label bugs found along the way and fixed: a label set back to "Not labelled" was never deleted (it kept counting in the eval), and re-saving reset every label's timestamp. Covered by `server/test/eval.test.ts`; also checked over HTTP on a real server with events sent through the real hook script (baseline only, no Claude key yet).
+
+**`.env` created (Oct 18)** from `.env.example` with 64-character random `ADMIN_TOKEN` and `INGEST_TOKEN`; git-ignored. `npm run doctor` passes with PayPal, Claude and GitHub OAuth skipped until their keys are added.
+
+**Still unverified:** how a chargeback (`PAYMENT.SALE.REVERSED`) shows up in the subscription transaction list. The schema's status enum has no `REVERSED`, so the sync may not book it. Check during the live run.
+
 ---
 
 ## 6. What's left
@@ -165,7 +195,7 @@ Pages: Overview (stats, money-flow diagram, checklist, PayPal activity) · Fundi
 | 3 | Anthropic API key | console.anthropic.com → `ANTHROPIC_API_KEY` | 5 min |
 | 4 | GitHub OAuth app | GitHub → Settings → Developer settings → OAuth Apps; callback `PUBLIC_BASE_URL/api/claims/github/callback` | 5 min |
 | 5 | Public https URL | Render (`render.yaml`, paid instance for the disk) **or** `cloudflared tunnel --url http://localhost:8787` for local (`cloudflared` is not installed on this machine yet) | 15–30 min |
-| 6 | Create `.env` | `cp .env.example .env`; generate `ADMIN_TOKEN` and `INGEST_TOKEN` (32+ random characters) | 5 min |
+| 6 | ~~Create `.env`~~ | Done Oct 18: tokens generated. Only paste in the keys from rows 1, 3, 4 and 6b | done |
 | 6b | GitHub token (recommended) | Fine-grained personal access token with public read access → `GITHUB_TOKEN`. Anonymous access is 60 requests/hour. | 3 min |
 | 7 | Check + PayPal setup | `npm run doctor` (should show no FAIL), then `npm run build && npm run setup:paypal && npm start` | 5 min |
 | 8 | Public GitHub repo | Create an empty **public** repo and share its URL so the local commit can be pushed | 2 min |
@@ -216,11 +246,12 @@ Put keys in `.env` yourself (it's git-ignored) rather than pasting them into cha
 | Window | Focus |
 |---|---|
 | Oct 11 ✓ | Offline hardening: Python map bug + security fix, `npm run doctor`, hook test, local git commit |
-| Oct 11–15 | Section A + B: first live sandbox run, fix anything it reveals |
-| Oct 16–25 | Section C: real sessions, labels, eval; prompt tuning against the eval only |
-| Oct 26–Nov 2 | Deploy on Render, end-to-end on the hosted URL, polish |
-| Nov 3–8 | Video, Devpost text, README links |
-| Nov 9–11 | Buffer; submit **before Nov 12, 12:00 pm PT** |
+| Oct 11–15 ✗ | Section A + B: first live sandbox run. **Slipped:** no credentials yet as of Oct 18 |
+| **Oct 18–22** | **Section A + B now.** This is the critical path; everything after depends on it |
+| Oct 23–30 | Section C: real sessions, labels, eval; prompt tuning against the eval only |
+| Oct 31–Nov 4 | Deploy on Render, end-to-end on the hosted URL, polish |
+| Nov 5–9 | Video, Devpost text, README links |
+| Nov 10–11 | Buffer; submit **before Nov 12, 12:00 pm PT** |
 
 ---
 
@@ -232,7 +263,7 @@ npm run dev                 # API (watch) + Vite on :5173
 npm run build && npm start  # production on :8787
 npm run doctor              # live, read-only credential and API checks
 npm run setup:paypal        # sandbox product, plan, webhook (idempotent)
-npm test                    # 18 tests
+npm test                    # 20 tests
 npm run typecheck           # server, web, mcp
 node hook/install.mjs --url <PUBLIC_BASE_URL> --token <INGEST_TOKEN> --project <dir> --with-mcp
 ```

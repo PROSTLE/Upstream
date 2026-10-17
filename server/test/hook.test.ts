@@ -43,15 +43,22 @@ test(
     // A project module that shadows the stdlib must never execute inside the hook.
     fs.writeFileSync(path.join(proj, "json.py"), `open(${JSON.stringify(marker)}, "w").write("ran")\n`);
     try {
-      const start = runHook(home, { hook_event_name: "SessionStart", session_id: "h1", cwd: proj });
-      const map = start.at(-1).upstream.py_import_map;
-      assert.ok(map && typeof map === "object", "SessionStart carries the import map");
-      assert.ok(Object.values(map).every((d) => Array.isArray(d)), "map values are distribution lists");
+      // Cold cache: SessionStart has an 8 s budget, so on a slow or busy machine the map may only
+      // arrive with the first Stop (which has 60 s). Either way the session gets it exactly once.
+      runHook(home, { hook_event_name: "SessionStart", session_id: "h1", cwd: proj });
+      const afterStop = runHook(home, { hook_event_name: "Stop", session_id: "h1", cwd: proj });
+      const maps = afterStop.map((e) => e.upstream.py_import_map).filter(Boolean);
+      assert.equal(maps.length, 1, "the import map is sent once, by SessionStart or else the first Stop");
+      assert.ok(Object.values(maps[0]).every((d) => Array.isArray(d)), "map values are distribution lists");
       assert.equal(fs.existsSync(marker), false, "project json.py was not imported");
 
       const stop = runHook(home, { hook_event_name: "Stop", session_id: "h1", cwd: proj });
       assert.equal(stop.at(-1).hook_event_name, "Stop");
       assert.equal(stop.at(-1).upstream.py_import_map, undefined, "unchanged environment is not resent");
+
+      // Warm cache (what install.mjs sets up): a new session's SessionStart carries the map itself.
+      const next = runHook(home, { hook_event_name: "SessionStart", session_id: "h2", cwd: proj });
+      assert.ok(next.at(-1).upstream.py_import_map, "SessionStart carries the map once the cache is warm");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

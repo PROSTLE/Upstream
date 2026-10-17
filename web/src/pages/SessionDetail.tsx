@@ -93,6 +93,9 @@ export function SessionDetail() {
         {!shown ? (
           <Empty icon={<Sparkles size={22} />} title={tab === "llm" ? "No Claude attribution yet" : "No baseline yet"}>
             Run attribution: Claude reads the evidence below and proposes weights with citations; code then drops anything uncited, hallucinated or merely present, and enforces the per-package cap from your policy.
+            {runs.length === 0 && cands.length > 0 && (
+              <> For the eval, label packages in “Your ground truth” first: labels saved before any attribution runs count as blind.</>
+            )}
           </Empty>
         ) : (
           <div className="grid-2" style={{ alignItems: "start" }}>
@@ -221,7 +224,7 @@ export function SessionDetail() {
               </div>
             )}
           </Card>
-          <LabelEditor sessionId={id} candidates={cands} labels={data.labels} onSaved={reload} />
+          <LabelEditor sessionId={id} candidates={cands} labels={data.labels} blind={data.labels_blind} attributed={runs.length > 0} onSaved={reload} />
         </div>
       </div>
 
@@ -282,7 +285,7 @@ function MiniStat({ icon, label, value, tone, foot }: { icon: React.ReactNode; l
   );
 }
 
-function LabelEditor({ sessionId, candidates, labels, onSaved }: { sessionId: string; candidates: any[]; labels: any[]; onSaved: () => void }) {
+function LabelEditor({ sessionId, candidates, labels, blind, attributed, onSaved }: { sessionId: string; candidates: any[]; labels: any[]; blind: boolean; attributed: boolean; onSaved: () => void }) {
   const initial = Object.fromEntries(labels.map((l) => [`${l.ecosystem}:${l.package}`, l.label]));
   const [values, setValues] = useState<Record<string, string>>(initial);
   const toast = useToast();
@@ -307,6 +310,15 @@ function LabelEditor({ sessionId, candidates, labels, onSaved }: { sessionId: st
         })}
       </div>
       <div className="row" style={{ marginTop: 14, justifyContent: "flex-end" }}>
+        <span className="muted small" style={{ flex: 1 }}>
+          {labels.length === 0
+            ? attributed
+              ? "Attribution already ran, so labels saved now count as not blind."
+              : "Label before attributing to keep these labels blind."
+            : blind
+              ? "Blind: saved before any attribution ran."
+              : "Not blind: saved or changed after attribution ran."}
+        </span>
         <ActionButton
           className="btn"
           onRun={async () => {
@@ -314,8 +326,8 @@ function LabelEditor({ sessionId, candidates, labels, onSaved }: { sessionId: st
               const [ecosystem, ...rest] = k.split(":");
               return { ecosystem, package: rest.join(":"), label };
             });
-            await api(`/api/sessions/${sessionId}/labels`, { method: "PUT", body: { labels: payload }, admin: true });
-            toast(`Saved ${payload.length} label(s).`);
+            const r = await api<any>(`/api/sessions/${sessionId}/labels`, { method: "PUT", body: { labels: payload }, admin: true });
+            toast(`Saved ${payload.length} label(s)${payload.length ? (r.blind ? " (blind)" : " (not blind)") : ""}.`);
             onSaved();
           }}
         >

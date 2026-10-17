@@ -85,6 +85,21 @@ export async function syncSubscription(id: string): Promise<{ status: string; bo
   return { status: sub.data.status, booked };
 }
 
+/** Pulls PayPal's transaction list for the given subscription, or for every one we hold when it's absent or unknown. */
+export async function syncKnownSubscriptions(preferId?: string): Promise<Record<string, unknown>> {
+  const known = db().prepare("SELECT id FROM subscriptions").all() as { id: string }[];
+  const targets = preferId && known.some((k) => k.id === preferId) ? [preferId] : known.map((k) => k.id);
+  const out: Record<string, unknown> = {};
+  for (const id of targets) {
+    try {
+      out[`subscription:${id}`] = await syncSubscription(id);
+    } catch (e) {
+      out[`subscription:${id}`] = { error: String(e) };
+    }
+  }
+  return out;
+}
+
 export function currentSubscription() {
   return db()
     .prepare("SELECT * FROM subscriptions ORDER BY updated_at DESC LIMIT 1")

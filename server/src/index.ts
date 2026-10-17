@@ -7,7 +7,7 @@ import { db, getSetting, initDb, json, now } from "./db.ts";
 import { ingest, type IngestPayload } from "./evidence/ingest.ts";
 import { buildCandidates } from "./evidence/candidates.ts";
 import { activeRun, attributeSession, runsForSession, setActiveRun } from "./attribution/run.ts";
-import { evalReport } from "./attribution/eval.ts";
+import { evalReport, LABELS, labelsAreBlind, saveLabels } from "./attribution/eval.ts";
 import { getPackage, resolveMany } from "./resolve/index.ts";
 import type { Ecosystem } from "./evidence/parse.ts";
 import {
@@ -88,6 +88,7 @@ app.get("/api/overview", (_req, res) => {
   res.json({
     brand: config.BRAND_NAME,
     environment: config.PAYPAL_ENV,
+    public_base_url: config.PUBLIC_BASE_URL,
     features,
     tithe: { amount: config.TITHE_AMOUNT, currency, interval: config.TITHE_INTERVAL_UNIT },
     policy: {
@@ -173,6 +174,7 @@ app.get("/api/sessions/:id", async (req, res) => {
     candidates,
     runs: runsForSession(id),
     labels: db().prepare("SELECT * FROM labels WHERE session_id = ?").all(id),
+    labels_blind: labelsAreBlind(id),
   });
 });
 
@@ -204,16 +206,10 @@ app.post("/api/sessions/:id/active-run", requireAdmin, (req, res) => {
 app.put("/api/sessions/:id/labels", requireAdmin, (req, res) => {
   const sid = String(req.params.id);
   const labels = (req.body?.labels ?? []) as { ecosystem: string; package: string; label: string; weight?: number | null }[];
-  const ok = new Set(["meaningful", "incidental", "not_used"]);
-  const stmt = db().prepare(
-    `INSERT INTO labels(session_id, ecosystem, package, label, weight, updated_at) VALUES (?,?,?,?,?,?)
-     ON CONFLICT(session_id, ecosystem, package) DO UPDATE SET label = excluded.label, weight = excluded.weight, updated_at = excluded.updated_at`,
-  );
-  for (const l of labels) {
-    if (!ok.has(l.label)) return res.status(400).json({ error: `Invalid label ${l.label}` });
-    stmt.run(sid, l.ecosystem, l.package, l.label, l.weight ?? null, now());
-  }
-  res.json({ ok: true, count: labels.length });
+  const bad = labels.find((l) => !LABELS.has(l.label));
+  if (bad) return res.status(400).json({ error: `Invalid label ${bad.label}` });
+  saveLabels(sid, labels);
+  res.json({ ok: true, count: labels.length, blind: labelsAreBlind(sid) });
 });
 
 app.get("/api/eval", (_req, res) => res.json(evalReport()));

@@ -210,4 +210,12 @@ async function main() {
   }
 }
 
+// `--warm-python <dir>` (run by install.mjs) fills the import-map cache ahead of time, so even the
+// first SessionStart on a machine gets a cache hit instead of racing its 8 s budget.
+if (process.argv[2] === "--warm-python") {
+  const py = pythonImportMap(path.resolve(process.argv[3] ?? process.cwd()), 120_000);
+  console.log(py ? `Python import map cached (${Object.keys(py.map).length} import names)` : "No Python interpreter found; skipped");
+  process.exit(0);
+}
+
 main().catch(() => {}).finally(() => process.exit(0));

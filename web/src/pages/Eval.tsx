@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { FlaskConical, Scale, Target } from "lucide-react";
 import { useApi } from "../api.ts";
@@ -14,9 +15,13 @@ const METRICS: { key: string; label: string; better: "high" | "low"; fmt: (v: nu
 ];
 
 export function Eval() {
-  const { data, error, loading } = useApi<any>("/api/eval");
-  if (loading && !data) return <div className="page"><Loading /></div>;
-  if (error || !data) return <div className="page"><ErrorBox error={error ?? "Could not load eval"} /></div>;
+  const { data: report, error, loading } = useApi<any>("/api/eval");
+  const [scope, setScope] = useState<"all" | "blind">("all");
+  if (loading && !report) return <div className="page"><Loading /></div>;
+  if (error || !report) return <div className="page"><ErrorBox error={error ?? "Could not load eval"} /></div>;
+  const data = scope === "blind" ? report.blind : report;
+  const total = report.llm.sessions;
+  const blindCount = report.blind.llm.sessions;
   const n = data.llm.sessions;
 
   return (
@@ -25,10 +30,19 @@ export function Eval() {
         title="Attribution eval"
         subtitle="Does Claude add anything over counting imports? Label real sessions with your own judgment, then compare both methods on exactly the same sessions."
       />
+      {total > 0 && (
+        <div className="row" style={{ gap: 10, marginBottom: 16 }}>
+          <div className="tabs">
+            <button className={`tab ${scope === "all" ? "active" : ""}`} onClick={() => setScope("all")}>All labelled ({total})</button>
+            <button className={`tab ${scope === "blind" ? "active" : ""}`} onClick={() => setScope("blind")}>Blind only ({blindCount})</button>
+          </div>
+          <span className="muted small">Blind: every label was saved before any attribution ran for that session, so neither method's weights could have influenced it.</span>
+        </div>
+      )}
       {n === 0 ? (
         <Card>
-          <Empty icon={<FlaskConical size={22} />} title="No labelled sessions yet">
-            Open a <Link to="/sessions">session</Link>, run attribution, then mark each package as meaningful, incidental or not used in “Your ground truth”. Scores appear here; nothing is precomputed.
+          <Empty icon={<FlaskConical size={22} />} title={scope === "blind" && total > 0 ? "No blind-labelled sessions yet" : "No labelled sessions yet"}>
+            Open a <Link to="/sessions">session</Link>, mark each package as meaningful, incidental or not used in “Your ground truth” <strong>before</strong> you attribute it (that keeps the label blind), then run attribution. Scores appear here; nothing is precomputed.
           </Empty>
         </Card>
       ) : (
@@ -67,7 +81,7 @@ export function Eval() {
               <Chart
                 height={260}
                 options={{
-                  data: ["precision", "recall", "f1", "accuracy"].map((k) => ({ metric: k.toUpperCase(), claude: data.llm[k] != null ? +(data.llm[k] * 100).toFixed(1) : 0, baseline: data.baseline[k] != null ? +(data.baseline[k] * 100).toFixed(1) : 0 })),
+                  data: ["precision", "recall", "f1", "accuracy"].map((k) => ({ metric: k.toUpperCase(), claude: data.llm[k] != null ? +(data.llm[k] * 100).toFixed(1) : undefined, baseline: data.baseline[k] != null ? +(data.baseline[k] * 100).toFixed(1) : undefined })),
                   series: [
                     { type: "bar", xKey: "metric", yKey: "claude", yName: "Claude", cornerRadius: 4 },
                     { type: "bar", xKey: "metric", yKey: "baseline", yName: "Baseline", cornerRadius: 4, fill: "#c9ccd6", stroke: "#c9ccd6" },
@@ -80,10 +94,11 @@ export function Eval() {
           </div>
           <Card title="Per session" icon={<FlaskConical size={17} />}>
             <div className="list" style={{ margin: "-16px -20px -20px" }}>
-              {data.perSession.map((s: any) => (
+              {report.perSession.filter((s: any) => scope === "all" || s.blind).map((s: any) => (
                 <Link key={s.session_id} to={`/sessions/${s.session_id}`} className="list-item" style={{ color: "inherit" }}>
                   <code>{s.session_id.slice(0, 12)}…</code>
                   <span className="muted small">{s.labelled} label(s)</span>
+                  <span className={`pill ${s.blind ? "green" : ""}`}>{s.blind ? "blind" : "labelled after attribution"}</span>
                   <div className="spacer" />
                   {!s.llm && <span className="pill amber">no Claude run</span>}
                   {!s.baseline && <span className="pill amber">no baseline</span>}

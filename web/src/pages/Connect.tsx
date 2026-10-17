@@ -22,7 +22,8 @@ function Code({ children }: { children: string }) {
 export function Connect() {
   const { data } = useApi<any>("/api/overview");
   const [scope, setScope] = useState<"project" | "user">("project");
-  const origin = window.location.origin.includes("localhost:5173") ? "http://localhost:8787" : window.location.origin;
+  // The hook posts to the server's PUBLIC_BASE_URL, which differs from this page's origin under the Vite dev server.
+  const origin = data?.public_base_url ?? "<PUBLIC_BASE_URL>";
   const f = data?.features ?? {};
   const install = `# from a clone of the Upstream repo
 node hook/install.mjs --url ${origin} --token <INGEST_TOKEN> ${scope === "user" ? "--user" : "--project /path/to/your/project --with-mcp"}`;

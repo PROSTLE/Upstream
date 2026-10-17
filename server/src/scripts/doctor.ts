@@ -51,7 +51,7 @@ async function paypal() {
 async function publicUrl() {
   const base = config.PUBLIC_BASE_URL;
   if (!base.startsWith("https://")) {
-    report("warn", "PUBLIC_BASE_URL", `${base} is not https: PayPal will not deliver webhooks and GitHub OAuth only works on this machine. The hourly reconciler still syncs payouts.`);
+    report("warn", "PUBLIC_BASE_URL", `${base} is not https: PayPal will not deliver webhooks and GitHub OAuth only works on this machine. The hourly reconciler still syncs payouts and subscription payments.`);
   }
   try {
     const { res, body } = await getJson(`${base}/api/health`, { signal: AbortSignal.timeout(8000) });

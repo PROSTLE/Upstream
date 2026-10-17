@@ -1,5 +1,5 @@
 import { db, now } from "../db.ts";
-import { syncSubscription, upsertSubscription } from "../funding.ts";
+import { syncKnownSubscriptions, syncSubscription, upsertSubscription } from "../funding.ts";
 import { applyPayoutItem, syncSettlement } from "../settlement.ts";
 import type { PayoutItem } from "./payouts.ts";
 import { verifyWebhook } from "./webhooks.ts";
@@ -58,13 +58,12 @@ async function processEvent(event: WebhookEvent) {
     if (r?.id) await syncSubscription(r.id);
     return;
   }
-  if (t === "PAYMENT.SALE.COMPLETED") {
+  if (t === "PAYMENT.SALE.COMPLETED" || t === "PAYMENT.SALE.REFUNDED" || t === "PAYMENT.SALE.REVERSED") {
     // Community samples link the sale to its subscription via billing_agreement_id; PayPal's own
     // docs don't show the payload, so when it's absent or unknown we sync every subscription we hold.
     // The sync reads PayPal's transaction list and books idempotently, so this is always safe.
-    const subId = event.resource?.billing_agreement_id;
-    const known = db().prepare("SELECT id FROM subscriptions").all() as { id: string }[];
-    const targets = subId && known.some((k) => k.id === subId) ? [subId] : known.map((k) => k.id);
-    for (const id of targets) await syncSubscription(id);
+    const out = await syncKnownSubscriptions(event.resource?.billing_agreement_id);
+    const failed = Object.entries(out).filter(([, r]) => (r as { error?: string }).error);
+    if (failed.length) throw new Error(`Subscription sync failed: ${failed.map(([k, r]) => `${k} ${(r as { error: string }).error}`).join("; ")}`);
   }
 }

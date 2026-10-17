@@ -3,6 +3,7 @@ import { activeRun } from "./attribution/run.ts";
 import { markReceiverUnclaimed, payableClaim } from "./claims.ts";
 import { config } from "./config.ts";
 import { db, json, newId, now, tx } from "./db.ts";
+import { syncKnownSubscriptions } from "./funding.ts";
 import { book, poolSummary } from "./ledger.ts";
 import { fromMinor, splitByWeights, toMinor } from "./money.ts";
 import { PayPalError } from "./paypal/client.ts";
@@ -419,6 +420,8 @@ export async function housekeeping() {
       out[s.id] = { error: String(e) };
     }
   }
+  // Funding is re-read from PayPal too, so payments and refunds are booked even if a webhook never arrives.
+  Object.assign(out, await syncKnownSubscriptions());
   const stale = db()
     .prepare("SELECT sender_item_id FROM payout_items WHERE transaction_status = 'UNCLAIMED' AND status_changed_at < ?")
     .all(new Date(Date.now() - days(config.POLICY_CANCEL_UNCLAIMED_AFTER_DAYS)).toISOString()) as { sender_item_id: string }[];
