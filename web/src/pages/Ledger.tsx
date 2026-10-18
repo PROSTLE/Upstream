@@ -1,29 +1,73 @@
-import { ArrowLeftRight, History, PieChart } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ArrowLeftRight, Download, History, PieChart, Search } from "lucide-react";
 import type { ColDef } from "ag-grid-community";
 import { useApi } from "../api.ts";
 import { dateTime, money, moneyStr } from "../format.ts";
 import { Card, Empty, ErrorBox, Loading, PageHead } from "../ui.tsx";
-import { Chart, Grid } from "../data.tsx";
+import { Chart, Grid, useNeutralFill, usePalette } from "../data.tsx";
 import { FlowDiagram } from "./Overview.tsx";
+import { useBrand } from "../brand.tsx";
 
-const KIND: Record<string, string> = {
-  FUNDING_GROSS: "Subscription payment",
-  FUNDING_FEE: "PayPal fee (funding)",
-  PAYOUT_SENT: "Payout to maintainer",
-  PAYOUT_FEE: "PayPal fee (payout)",
-  PAYOUT_RETURNED: "Payout returned / cancelled",
-};
+/** A readable name for each ledger line, from its kind, sign and what it refers to. */
+function entryLabel(e: any): string {
+  const amount = Number(e.amount_minor);
+  switch (e.kind) {
+    case "FUNDING_GROSS":
+      if (amount < 0) return e.ref_type === "topup" ? "Top-up refunded" : "Subscription payment refunded";
+      return e.ref_type === "topup" ? "One-time top-up" : "Subscription payment";
+    case "FUNDING_FEE":
+      return amount > 0 ? "PayPal fee returned on a refund" : e.ref_type === "topup" ? "PayPal fee (top-up)" : "PayPal fee (subscription)";
+    case "PAYOUT_SENT":
+      return "Payout to maintainer";
+    case "PAYOUT_FEE":
+      return "PayPal fee (payout)";
+    case "PAYOUT_RETURNED":
+      return "Payout returned / cancelled";
+    default:
+      return e.kind;
+  }
+}
+
+const GROUPS = [
+  { v: "all", label: "All", kinds: null },
+  { v: "in", label: "Money in", kinds: ["FUNDING_GROSS"] },
+  { v: "fees", label: "PayPal fees", kinds: ["FUNDING_FEE", "PAYOUT_FEE"] },
+  { v: "out", label: "Payouts", kinds: ["PAYOUT_SENT"] },
+  { v: "returns", label: "Returns", kinds: ["PAYOUT_RETURNED"] },
+] as const;
+
+function toCsv(rows: any[]): string {
+  const q = (v: unknown) => {
+    const s = v == null ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const head = ["occurred_at", "entry", "kind", "amount", "currency", "ref_type", "ref_id", "memo", "source"];
+  return [head.join(","), ...rows.map((e) => [e.occurred_at, entryLabel(e), e.kind, e.amount, e.currency, e.ref_type, e.ref_id, e.memo, e.source].map(q).join(","))].join("\n");
+}
 
 export function Ledger() {
-  const { data, error, loading } = useApi<any>("/api/ledger");
+  const { data, error, loading } = useApi<any>("/api/ledger", [], { poll: 30000 });
+  const pal = usePalette();
+  const brand = useBrand();
+  const neutral = useNeutralFill();
+  const [group, setGroup] = useState<(typeof GROUPS)[number]["v"]>("all");
+  const [q, setQ] = useState("");
+  const rows = useMemo(() => {
+    const g = GROUPS.find((x) => x.v === group)!;
+    const qq = q.trim().toLowerCase();
+    return (data?.entries ?? []).filter((e: any) =>
+      (!g.kinds || (g.kinds as readonly string[]).includes(e.kind)) &&
+      (!qq || `${entryLabel(e)} ${e.ref_id ?? ""} ${e.memo ?? ""}`.toLowerCase().includes(qq)));
+  }, [data, group, q]);
   if (loading && !data) return <div className="page"><Loading /></div>;
   if (error || !data) return <div className="page"><ErrorBox error={error ?? "Could not load ledger"} /></div>;
   const p = data.summary;
   const cur = p.currency;
+  const shownTotal = rows.reduce((a: number, e: any) => a + Number(e.amount_minor), 0);
 
   const cols: ColDef<any>[] = [
     { headerName: "When", field: "occurred_at", maxWidth: 170, sort: "desc", valueFormatter: (x) => dateTime(x.value) },
-    { headerName: "Entry", field: "kind", minWidth: 200, valueFormatter: (x) => KIND[x.value] ?? x.value },
+    { headerName: "Entry", minWidth: 220, valueGetter: (x) => entryLabel(x.data) },
     { headerName: "Amount", field: "amount", maxWidth: 150, type: "numericColumn", cellClass: "num", valueFormatter: (x) => moneyStr(x.value, x.data.currency), cellStyle: (x: any) => ({ color: Number(x.value) < 0 ? "var(--red)" : "var(--green)", fontWeight: 600 }) as any },
     { headerName: "Reference", field: "ref_id", minWidth: 200, cellClass: "mono" },
     { headerName: "Memo", field: "memo", flex: 2, minWidth: 220 },
@@ -39,20 +83,30 @@ export function Ledger() {
     { headerName: "ms", field: "duration_ms", maxWidth: 90, type: "numericColumn" },
   ];
 
+  // Same colour per meaning as the flow diagram beside it.
   const donut = [
-    { k: "Paid to maintainers", v: -p.payoutsSent - p.returned },
-    { k: "PayPal fees", v: -p.fundingFees - p.payoutFees },
-    { k: "Held for unclaimed", v: p.reserved },
-    { k: "In flight", v: p.inFlight },
-    { k: "Available", v: p.available },
+    { k: "Paid to maintainers", v: -p.payoutsSent - p.returned, fill: pal[1] },
+    { k: "PayPal fees", v: -p.fundingFees - p.payoutFees, fill: neutral },
+    { k: "Held for unclaimed", v: p.reserved, fill: pal[2] },
+    { k: "In flight", v: p.inFlight, fill: pal[0] },
+    { k: "Available", v: p.available, fill: pal[3] },
   ].filter((d) => d.v > 0).map((d) => ({ ...d, label: money(d.v, cur) }));
+
+  const download = () => {
+    const blob = new Blob([toCsv(rows)], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `ledger-${group}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
 
   return (
     <div className="page">
-      <PageHead title="Ledger" subtitle="Only movements PayPal has confirmed: subscription transactions, payout item statuses and fees, returns. Webhooks and the hourly reconciler write the same idempotent entries." />
+      <PageHead eyebrow="Step 5 · Reconcile" title="Ledger" subtitle="Only movements PayPal has confirmed: subscription and top-up captures, payout item statuses and fees, refunds and returns. Webhooks and the hourly reconciler write the same idempotent entries." />
       <div className="split">
         <Card title="Flow of funds" icon={<ArrowLeftRight size={17} />}>
-          {p.fundingGross === 0 ? <Empty icon={<ArrowLeftRight size={22} />} title="No money has moved yet" /> : <FlowDiagram pool={p} />}
+          {p.fundingGross === 0 ? <Empty icon={<ArrowLeftRight size={22} />} title="No money has moved yet">Entries appear when PayPal confirms the first subscription payment or top-up.</Empty> : <FlowDiagram pool={p} />}
         </Card>
         <Card title="Breakdown" icon={<PieChart size={17} />} tone="violet">
           {donut.length === 0 ? <Empty icon={<PieChart size={22} />} title="Nothing to chart yet" /> : (
@@ -60,18 +114,35 @@ export function Ledger() {
               height={280}
               options={{
                 data: donut,
-                series: [{ type: "donut", angleKey: "v", legendItemKey: "k", innerRadiusRatio: 0.68, calloutLabelKey: "label", calloutLabel: { enabled: false }, tooltip: { renderer: ({ datum }: any) => ({ title: datum.k, content: datum.label }) } }],
-                legend: { position: "right" },
+                series: [{ type: "donut", angleKey: "v", legendItemKey: "k", fills: donut.map((d) => d.fill), strokes: donut.map((d) => d.fill), innerRadiusRatio: 0.68, calloutLabelKey: "label", calloutLabel: { enabled: false }, tooltip: { renderer: ({ datum }: any) => ({ title: datum.k, content: datum.label }) } }],
+                legend: { position: "bottom" },
               } as any}
             />
           )}
         </Card>
       </div>
-      <Card title="Entries" icon={<ArrowLeftRight size={17} />} tone="teal">
-        <Grid rows={data.entries} columns={cols} height={420} getRowId={(r) => String(r.id)} />
+      <Card
+        title="Entries"
+        sub={`${rows.length} shown · net ${money(shownTotal, cur)}`}
+        icon={<ArrowLeftRight size={17} />}
+        tone="teal"
+        actions={<button className="btn sm" onClick={download} disabled={!rows.length}><Download size={14} />Export CSV</button>}
+      >
+        <div className="row" style={{ marginBottom: 12, gap: 12 }}>
+          <div className="tabs" role="tablist" aria-label="Filter entries">
+            {GROUPS.map((g) => <button key={g.v} role="tab" aria-selected={group === g.v} className="tab" onClick={() => setGroup(g.v)}>{g.label}</button>)}
+          </div>
+          <div className="spacer" />
+          <label className="row" style={{ gap: 0, position: "relative", flex: "0 1 280px", minWidth: 200 }}>
+            <span className="sr-only">Search entries</span>
+            <Search size={15} style={{ position: "absolute", left: 11, color: "var(--faint)" }} />
+            <input className="input" style={{ paddingLeft: 34, minHeight: 36 }} placeholder="Reference or memo" value={q} onChange={(e) => setQ(e.target.value)} />
+          </label>
+        </div>
+        <Grid rows={rows} columns={cols} height={420} getRowId={(r) => String(r.id)} empty="No entries match this filter" />
       </Card>
-      <Card title="PayPal API audit log" sub="Every call Upstream made, with PayPal-Request-Id and PayPal-Debug-Id" icon={<History size={17} />}>
-        <Grid rows={data.paypal_calls} columns={callCols} height={380} getRowId={(r) => String(r.id)} />
+      <Card title="PayPal API audit log" sub={`Every call ${brand} made, with PayPal-Request-Id and PayPal-Debug-Id`} icon={<History size={17} />}>
+        <Grid rows={data.paypal_calls} columns={callCols} height={380} getRowId={(r) => String(r.id)} empty="No PayPal calls yet" />
       </Card>
     </div>
   );

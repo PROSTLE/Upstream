@@ -29,6 +29,8 @@ export function setPayPalFetch(f: FetchLike): void {
   fetchImpl = f;
   cachedToken = undefined;
 }
+/** The transport in use, for calls that don't take the app's bearer token (Log in with PayPal's code exchange). */
+export const paypalFetch = (): FetchLike => fetchImpl;
 
 let cachedToken: { token: string; expiresAt: number } | undefined;
 
@@ -62,7 +64,7 @@ export interface PayPalResponse<T> {
 export async function paypal<T = unknown>(
   method: "GET" | "POST" | "PATCH",
   path: string,
-  opts: { body?: unknown; rawBody?: string; requestId?: string; query?: Record<string, string> } = {},
+  opts: { body?: unknown; rawBody?: string; requestId?: string; query?: Record<string, string>; headers?: Record<string, string> } = {},
 ): Promise<PayPalResponse<T>> {
   const token = await accessToken();
   const url = new URL(config.PAYPAL_API_BASE + path);
@@ -73,6 +75,7 @@ export async function paypal<T = unknown>(
   };
   if (opts.body !== undefined || opts.rawBody !== undefined) headers["Content-Type"] = "application/json";
   if (opts.requestId) headers["PayPal-Request-Id"] = opts.requestId;
+  Object.assign(headers, opts.headers);
 
   const started = Date.now();
   let res: Response;
@@ -95,7 +98,7 @@ export async function paypal<T = unknown>(
   return { status: res.status, data, debugId };
 }
 
-function logCall(
+export function logCall(
   method: string,
   path: string,
   requestId: string | undefined,

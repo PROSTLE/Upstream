@@ -21,6 +21,7 @@
     "doctor": "npm run doctor -w server",
     "hook:install": "node hook/install.mjs",
     "test": "npm test -w server",
-    "typecheck": "npm run typecheck -w server && npm run typecheck -w web && npm run typecheck -w mcp"
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web && npm run typecheck -w mcp",
+    "icons": "node scripts/icons.mjs"
   }
 }

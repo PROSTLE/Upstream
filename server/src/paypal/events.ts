@@ -1,6 +1,7 @@
 import { db, now } from "../db.ts";
 import { syncKnownSubscriptions, syncSubscription, upsertSubscription } from "../funding.ts";
 import { applyPayoutItem, syncSettlement } from "../settlement.ts";
+import { topupFromWebhook } from "../topups.ts";
 import type { PayoutItem } from "./payouts.ts";
 import { verifyWebhook } from "./webhooks.ts";
 
@@ -56,6 +57,11 @@ async function processEvent(event: WebhookEvent) {
     const r = event.resource;
     if (r?.id && r?.plan_id) upsertSubscription(r);
     if (r?.id) await syncSubscription(r.id);
+    return;
+  }
+  if (t === "CHECKOUT.ORDER.APPROVED" || t.startsWith("PAYMENT.CAPTURE.")) {
+    // One-time top-ups. Like every other event, this only triggers a read of the order from PayPal.
+    await topupFromWebhook(t, event.resource);
     return;
   }
   if (t === "PAYMENT.SALE.COMPLETED" || t === "PAYMENT.SALE.REFUNDED" || t === "PAYMENT.SALE.REVERSED") {

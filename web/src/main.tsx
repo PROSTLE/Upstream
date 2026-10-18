@@ -6,13 +6,16 @@ import "@fontsource-variable/jetbrains-mono";
 import "./styles.css";
 import { App } from "./App.tsx";
 import { Providers } from "./ui.tsx";
+import { BrandProvider } from "./brand.tsx";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <BrowserRouter>
-      <Providers>
-        <App />
-      </Providers>
+      <BrandProvider>
+        <Providers>
+          <App />
+        </Providers>
+      </BrandProvider>
     </BrowserRouter>
   </StrictMode>,
 );

@@ -1,0 +1,20 @@
+{
+  "description": "Upstream: record the open-source evidence of each Claude Code tool call. Never blocks the agent.",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hook/upstream-hook.mjs\"", "timeout": 10 }] }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Edit|MultiEdit|Write|NotebookEdit|Read|Grep|Glob|WebFetch|WebSearch|mcp__.*",
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hook/upstream-hook.mjs\"", "async": true }]
+      }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hook/upstream-hook.mjs\"", "async": true }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hook/upstream-hook.mjs\"", "timeout": 5 }] }
+    ]
+  }
+}

@@ -36,3 +36,8 @@ export function duration(a: string | null | undefined, b: string | null | undefi
 }
 
 export const shortId = (id: string | null | undefined, n = 8) => (id ? (id.length > n + 2 ? `${id.slice(0, n)}…` : id) : "—");
+
+/** "1 session", "3 sessions": the count and the word, pluralised in English. */
+export function plural(n: number, word: string, many = `${word}s`): string {
+  return `${n} ${n === 1 ? word : many}`;
+}

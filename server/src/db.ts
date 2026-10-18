@@ -212,6 +212,33 @@ CREATE TABLE IF NOT EXISTS webhook_events (
   raw_json TEXT NOT NULL
 );
 
+-- One-time top-ups through PayPal Orders v2 (intent CAPTURE). Money is booked only from the capture PayPal returns.
+CREATE TABLE IF NOT EXISTS topups (
+  id TEXT PRIMARY KEY,                          -- also the order's custom_id and PayPal-Request-Id
+  order_id TEXT UNIQUE,
+  amount_minor INTEGER NOT NULL,
+  currency TEXT NOT NULL,
+  source TEXT NOT NULL,                         -- dashboard | agent
+  note TEXT,
+  status TEXT NOT NULL,                         -- order status: CREATED | APPROVED | COMPLETED | VOIDED | PAYER_ACTION_REQUIRED
+  capture_id TEXT,
+  capture_status TEXT,                          -- COMPLETED | PENDING | DECLINED | REFUNDED | PARTIALLY_REFUNDED | FAILED
+  approve_url TEXT,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+-- Log in with PayPal round trips for maintainers (state -> what the sign-in completes).
+CREATE TABLE IF NOT EXISTS paypal_login_states (
+  state TEXT PRIMARY KEY,
+  mode TEXT NOT NULL,                           -- github_claim | funding_claim
+  repo TEXT,
+  claim_token TEXT,
+  created_at TEXT NOT NULL,
+  used_at TEXT
+);
+
 -- Every call Upstream makes to PayPal, for the audit trail in the dashboard.
 CREATE TABLE IF NOT EXISTS paypal_calls (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
