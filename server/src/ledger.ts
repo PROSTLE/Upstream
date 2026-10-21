@@ -49,6 +49,8 @@ export interface PoolSummary {
   reserved: number; // earmarked for repos without a verified maintainer yet
   inFlight: number; // in a batch that PayPal has not finished
   available: number; // what the next settlement may allocate
+  /** balance - reserved - inFlight, not clamped: negative when PayPal's actual fees or a refund left earmarks larger than the money. */
+  headroom: number;
 }
 
 export function poolSummary(currency: string): PoolSummary {
@@ -98,6 +100,7 @@ export function poolSummary(currency: string): PoolSummary {
     reserved,
     inFlight,
     available: Math.max(balance - reserved - inFlight, 0),
+    headroom: balance - reserved - inFlight,
   };
 }
 

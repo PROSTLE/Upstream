@@ -1,8 +1,13 @@
-import { Boxes, ExternalLink, RefreshCw, ShieldAlert, ShieldCheck, ShieldQuestion } from "lucide-react";
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { BadgeCheck, Boxes, ExternalLink, Hourglass, Link2, RefreshCw, Route, ShieldAlert, ShieldCheck, ShieldQuestion, TerminalSquare } from "lucide-react";
 import type { ColDef } from "ag-grid-community";
 import { api, useApi } from "../api.ts";
-import { moneyStr } from "../format.ts";
-import { ActionButton, BrandIcon, Card, EcoIcon, Empty, ErrorBox, Loading, PageHead, Status, useToast } from "../ui.tsx";
+import { moneyStr, plural } from "../format.ts";
+import { useOverview } from "../overview.tsx";
+import { TrailDrawer } from "../trail.tsx";
+import { useBrand } from "../brand.tsx";
+import { ActionButton, BrandIcon, Card, EcoIcon, Empty, ErrorBox, Loading, PageHead, Stat, Status, useCopy, useToast } from "../ui.tsx";
 import { Grid } from "../data.tsx";
 
 function Provenance({ value }: { value: string | null }) {
@@ -18,9 +23,23 @@ function Provenance({ value }: { value: string | null }) {
   );
 }
 
+/** Funding links come from third-party metadata; one malformed URL must not break the whole grid. */
+function hostOf(u: string): string {
+  try {
+    return new URL(u).hostname.replace(/^www\./, "");
+  } catch {
+    return u;
+  }
+}
+
 export function Packages() {
   const { data, error, loading, reload } = useApi<any[]>("/api/packages");
   const toast = useToast();
+  const copy = useCopy();
+  const { data: ov } = useOverview();
+  const brand = useBrand();
+  const [trail, setTrail] = useState<string | null>(null);
+  const base = ov?.public_base_url ?? window.location.origin;
   const cols: ColDef<any>[] = [
     {
       headerName: "Package",
@@ -60,7 +79,7 @@ export function Packages() {
         return (
           <span className="row" style={{ gap: 6, height: "100%" }} title={links.join("\n")}>
             {links.slice(0, 3).map((u) => (
-              <a key={u} href={u} target="_blank" rel="noreferrer" className="chip">{new URL(u).hostname.replace("www.", "")}</a>
+              <a key={u} href={u} target="_blank" rel="noreferrer" className="chip">{hostOf(u)}</a>
             ))}
             {links.length > 3 && <span className="muted small">+{links.length - 3}</span>}
           </span>
@@ -84,12 +103,43 @@ export function Packages() {
     { headerName: "Held", field: "reserved", maxWidth: 120, type: "numericColumn", cellClass: "num", valueFormatter: (p) => moneyStr(p.value, p.data.currency) },
     { headerName: "In flight", field: "in_flight", maxWidth: 120, type: "numericColumn", cellClass: "num", valueFormatter: (p) => moneyStr(p.value, p.data.currency) },
     { headerName: "Paid", field: "paid", maxWidth: 120, type: "numericColumn", cellClass: "num", valueFormatter: (p) => moneyStr(p.value, p.data.currency) },
+    {
+      headerName: "",
+      colId: "actions",
+      minWidth: 200,
+      maxWidth: 220,
+      sortable: false,
+      filter: false,
+      cellRenderer: (p: any) =>
+        p.data.repo ? (
+          <span className="row" style={{ gap: 4, height: "100%" }}>
+            <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); setTrail(p.data.repo); }}><Route size={13} />Trail</button>
+            {!p.data.claim && (
+              <button
+                className="btn ghost sm"
+                title="Copy a claim link to send the maintainer"
+                onClick={(e) => { e.stopPropagation(); void copy(`${base}/claim?repo=${p.data.repo.replace("github.com/", "")}`, "Claim link copied. Send it to the maintainer."); }}
+              >
+                <Link2 size={13} />Invite
+              </button>
+            )}
+          </span>
+        ) : null,
+    },
   ];
+  const rows = data ?? [];
+  const cur: string | undefined = rows[0]?.currency ?? ov?.pool?.currency;
+  // Held amounts are per repo, and several packages can share one repo: count each repo once.
+  const heldByRepo = new Map(rows.filter((r) => r.repo).map((r) => [r.repo, Number(r.reserved)]));
+  const heldTotal = [...heldByRepo.values()].reduce((a, v) => a + v, 0);
+  const verified = new Set(rows.filter((r) => r.claim).map((r) => r.repo)).size;
+  const repos = new Set(rows.filter((r) => r.repo).map((r) => r.repo)).size;
   const conflicts = (data ?? []).filter((d) => d.repo_conflict);
 
   return (
     <div className="page">
       <PageHead
+        eyebrow="Step 3 · Verified maintainers"
         title="Packages & maintainers"
         subtitle="Package → repo comes from deps.dev and ecosyste.ms; funding signals from registry metadata and FUNDING.yml. Money only goes to maintainers who prove they control the repo."
         actions={
@@ -98,7 +148,7 @@ export function Packages() {
             <ActionButton
               onRun={async () => {
                 const r = await api<{ refreshed: number }>("/api/packages/refresh", { body: {}, admin: true });
-                toast(`Refreshed ${r.refreshed} package(s) from deps.dev, ecosyste.ms and GitHub.`);
+                toast(`Refreshed ${plural(r.refreshed, "package")} from deps.dev, ecosyste.ms and GitHub.`);
                 await reload();
               }}
             >
@@ -109,22 +159,33 @@ export function Packages() {
         }
       />
       {error && <ErrorBox error={error} />}
+      {rows.length > 0 && (
+        <div className="grid-4">
+          <Stat label="Packages relied on" value={rows.length} icon={<Boxes size={15} />} foot={`${repos} source repositories`} />
+          <Stat label="Verified maintainers" value={verified} tone="green" icon={<BadgeCheck size={15} />} foot="Proved admin/maintain access or a FUNDING.yml token" />
+          <Stat label="Held for unclaimed repos" value={cur ? moneyStr(heldTotal.toFixed(6), cur) : "—"} tone="amber" icon={<Hourglass size={15} />} foot="Use Invite to send maintainers a claim link" />
+          <Stat label="Repo not resolved" value={rows.filter((r) => !r.repo).length} tone="violet" icon={<ShieldQuestion size={15} />} foot="Can't be paid until a repo is found" />
+        </div>
+      )}
       {conflicts.length > 0 && (
         <div className="callout amber">
           <ShieldAlert size={18} color="var(--amber)" />
           <div>
-            <strong>Sources disagree on {conflicts.length} repo link(s).</strong> deps.dev notes its links are not verified for correctness, so Upstream prefers attested provenance and shows both. Check:{" "}
+            <strong>Sources disagree on {plural(conflicts.length, "repo link")}.</strong> deps.dev notes its links are not verified for correctness, so {brand} prefers attested provenance and shows both. Check:{" "}
             {conflicts.map((c) => `${c.name} (${c.repo_conflict.depsdev} vs ${c.repo_conflict.ecosystems})`).join(", ")}
           </div>
         </div>
       )}
       <Card>
         {loading && !data ? <Loading /> : !data?.length ? (
-          <Empty icon={<Boxes size={22} />} title="No packages yet">Packages appear after a session is attributed.</Empty>
+          <Empty icon={<Boxes size={22} />} title="No packages yet" action={<Link className="btn" to="/sessions"><TerminalSquare size={15} />Attribute a session</Link>}>
+            Packages appear once a session is attributed. {brand} then resolves each one to its source repository and funding links.
+          </Empty>
         ) : (
-          <Grid rows={data} columns={cols} height={600} getRowId={(r) => `${r.ecosystem}:${r.name}`} />
+          <Grid rows={data} columns={cols} height={600} getRowId={(r) => `${r.ecosystem}:${r.name}`} onRowClick={(r) => r.repo && setTrail(r.repo)} />
         )}
       </Card>
+      {trail && <TrailDrawer repo={trail} onClose={() => setTrail(null)} />}
     </div>
   );
 }

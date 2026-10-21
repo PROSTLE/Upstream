@@ -13,7 +13,7 @@ export async function ensureProductAndPlan(): Promise<{ productId: string; planI
       requestId: `upstream-product-${config.PAYPAL_CLIENT_ID?.slice(-8)}`,
       body: {
         name: config.TITHE_PRODUCT_NAME,
-        description: "Monthly budget that Upstream distributes to the open-source maintainers your AI coding agent relied on.",
+        description: `Recurring budget that ${config.BRAND_NAME} distributes to the open-source maintainers your AI coding agent relied on.`.slice(0, 256),
         type: "SERVICE",
         home_url: config.PUBLIC_BASE_URL.startsWith("https://") ? config.PUBLIC_BASE_URL : undefined,
       },

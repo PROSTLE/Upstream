@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import { config, features } from "./config.ts";
 import { db, json, newId, now, tx } from "./db.ts";
 import { fetchFundingYml, normalizeRepo } from "./resolve/index.ts";
+import { paypalAuthorizeUrl, paypalIdentity } from "./paypal/identity.ts";
 
 export interface Claim {
   id: string;
@@ -23,8 +24,9 @@ export interface Claim {
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function parseRepoInput(input: string): string {
-  const repo = normalizeRepo(input.includes("github.com") ? input : `https://github.com/${input}`);
-  if (!repo) throw new Error("Enter a GitHub repository as owner/name or a github.com URL.");
+  const repo = normalizeRepo(input.includes("github.com") ? input : `https://github.com/${input.trim()}`);
+  // GitHub account names are letters, digits and hyphens only, so "gitlab.com/a/b" can't pass as owner "gitlab.com".
+  if (!repo || !/^github\.com\/[a-z0-9-]+\/[a-z0-9_.-]+$/.test(repo)) throw new Error("Enter a GitHub repository as owner/name or a github.com URL.");
   return repo;
 }
 
@@ -47,7 +49,8 @@ export function payableClaim(repo: string): Claim | undefined {
 function activate(claimId: string, repo: string) {
   tx(() => {
     db().prepare("UPDATE claims SET status = 'superseded' WHERE repo = ? AND status IN ('verified','receiver_unclaimed') AND id != ?").run(repo, claimId);
-    db().prepare("UPDATE claims SET status = 'verified', verified_at = ? WHERE id = ?").run(now(), claimId);
+    // verified_at records when ownership was first proven; changing the payout email later doesn't move it.
+    db().prepare("UPDATE claims SET status = 'verified', verified_at = COALESCE(verified_at, ?) WHERE id = ?").run(now(), claimId);
   });
 }
 
@@ -159,6 +162,10 @@ export function startFundingTokenClaim(repoInput: string, receiver: string): Cla
 export async function verifyFundingTokenClaim(claimId: string): Promise<Claim> {
   const row = db().prepare("SELECT * FROM claims WHERE id = ? AND method = 'funding_yml_token'").get(claimId) as any;
   if (!row) throw new Error("Unknown claim.");
+  // This endpoint is public, so it may only finish a pending claim. Re-verifying an old one would let it
+  // replace the repo's current maintainer just because its token is still in FUNDING.yml.
+  if (row.status === "verified") return rowToClaim(row);
+  if (row.status !== "pending") throw new Error(`This claim is ${row.status.replace(/_/g, " ")}. Start a new claim for ${row.repo}.`);
   const yml = await fetchFundingYml(row.repo);
   if (!yml) throw new Error(`No FUNDING.yml found in ${row.repo} (.github/, root or docs/).`);
   if (!yml.raw.includes(row.token)) {
@@ -190,7 +197,71 @@ export function updateReceiver(claimId: string, receiver: string, proofToken: st
     .prepare("SELECT * FROM claims WHERE id = ? AND token = ? AND method = 'github_admin'")
     .get(claimId, proofToken) as any;
   if (!row) throw new Error("Unknown claim or token. FUNDING.yml claims change their receiver by claiming again.");
+  // Only the repo's current claim may change its receiver; a superseded or revoked token must not take the repo back.
+  if (row.status !== "verified" && row.status !== "receiver_unclaimed") {
+    throw new Error(`This claim is ${row.status.replace(/_/g, " ")}. Sign in with GitHub again to claim ${row.repo}.`);
+  }
   db().prepare("UPDATE claims SET paypal_receiver = ? WHERE id = ?").run(receiver.trim(), claimId);
   activate(claimId, row.repo);
   return rowToClaim(db().prepare("SELECT * FROM claims WHERE id = ?").get(claimId));
+}
+
+// ---------- Log in with PayPal (verified payout email) ----------
+
+/** Start Log in with PayPal for a GitHub-verified claim (by its private token) or before a FUNDING.yml claim. */
+export function paypalLoginStart(input: { token?: string; repo?: string }): string {
+  if (!features.paypalLogin) throw new Error("Log in with PayPal isn't enabled on this server.");
+  const state = randomBytes(24).toString("hex");
+  if (input.token) {
+    const row = db().prepare("SELECT id, status FROM claims WHERE token = ? AND method = 'github_admin'").get(input.token) as
+      | { id: string; status: string }
+      | undefined;
+    if (!row) throw new Error("Unknown claim.");
+    if (row.status !== "pending") throw new Error("This claim is already complete.");
+    db().prepare("INSERT INTO paypal_login_states(state, mode, claim_token, created_at) VALUES (?,?,?,?)").run(state, "github_claim", input.token, now());
+  } else {
+    const repo = parseRepoInput(input.repo ?? "");
+    db().prepare("INSERT INTO paypal_login_states(state, mode, repo, created_at) VALUES (?,?,?,?)").run(state, "funding_claim", repo, now());
+  }
+  return paypalAuthorizeUrl(state);
+}
+
+function addEvidence(claimId: string, extra: Record<string, unknown>) {
+  const row = db().prepare("SELECT evidence_json FROM claims WHERE id = ?").get(claimId) as { evidence_json: string | null };
+  db().prepare("UPDATE claims SET evidence_json = ? WHERE id = ?").run(JSON.stringify({ ...json(row?.evidence_json, {}), ...extra }), claimId);
+}
+
+export async function paypalLoginCallback(code: string, state: string): Promise<{ mode: "github_claim" | "funding_claim"; claim: Claim }> {
+  const st = db().prepare("SELECT * FROM paypal_login_states WHERE state = ?").get(state) as
+    | { mode: "github_claim" | "funding_claim"; repo: string | null; claim_token: string | null; created_at: string; used_at: string | null }
+    | undefined;
+  if (!st || st.used_at) throw new Error("This PayPal sign-in link is invalid or was already used.");
+  if (Date.now() - new Date(st.created_at).getTime() > 15 * 60 * 1000) throw new Error("This PayPal sign-in link expired. Start again.");
+  db().prepare("UPDATE paypal_login_states SET used_at = ? WHERE state = ?").run(now(), state);
+  const who = await paypalIdentity(code);
+  if (who.email_verified === false) throw new Error("PayPal says this account's email isn't verified yet. Verify it in PayPal, then try again.");
+  const proof = { paypal_identity: { source: "log_in_with_paypal", email_verified: who.email_verified, verified_account: who.verified_account, checked_at: now() } };
+  if (st.mode === "github_claim") {
+    const claim = completeGithubClaim(st.claim_token!, who.email);
+    addEvidence(claim.id, proof);
+    return { mode: st.mode, claim };
+  }
+  const claim = startFundingTokenClaim(st.repo!, who.email);
+  addEvidence(claim.id, proof);
+  return { mode: st.mode, claim };
+}
+
+/** The public view of a pending FUNDING.yml claim (its token is public by design; the receiver is masked). */
+export function fundingClaimView(claimId: string) {
+  const row = db().prepare("SELECT * FROM claims WHERE id = ? AND method = 'funding_yml_token'").get(claimId) as any;
+  if (!row) return undefined;
+  const c = rowToClaim(row);
+  return {
+    id: c.id,
+    repo: c.repo,
+    status: c.status,
+    instruction: `custom: ["${config.PUBLIC_BASE_URL}/c/${c.token}"]`,
+    receiver: c.paypal_receiver ? c.paypal_receiver.replace(/^(.).*(@.*)$/, "$1•••$2") : null,
+    receiver_verified_by_paypal: Boolean((c.evidence as any).paypal_identity),
+  };
 }

@@ -8,15 +8,22 @@ import { ingest, type IngestPayload } from "./evidence/ingest.ts";
 import { buildCandidates } from "./evidence/candidates.ts";
 import { activeRun, attributeSession, runsForSession, setActiveRun } from "./attribution/run.ts";
 import { evalReport, LABELS, labelsAreBlind, saveLabels } from "./attribution/eval.ts";
-import { getPackage, resolveMany } from "./resolve/index.ts";
+import { getPackage, normalizeRepo, resolveMany } from "./resolve/index.ts";
+import { badgeSvg, moneyTrail, repoSummary, reposWithMoney } from "./public.ts";
+import { sessionCredits } from "./credits.ts";
+import { auditReport } from "./audit.ts";
+import { agentAllowance, captureTopup, listTopups, startTopup, syncTopup } from "./topups.ts";
 import type { Ecosystem } from "./evidence/parse.ts";
 import {
   claimByToken,
   completeGithubClaim,
   githubAuthorizeUrl,
   githubCallback,
+  fundingClaimView,
   listClaims,
   payableClaim,
+  paypalLoginCallback,
+  paypalLoginStart,
   startFundingTokenClaim,
   updateReceiver,
   verifyFundingTokenClaim,
@@ -49,11 +56,29 @@ const safeEqual = (a: string, b: string) => {
   return x.length === y.length && timingSafeEqual(x, y);
 };
 
+const isAdmin = (req: Request) => Boolean(config.ADMIN_TOKEN) && safeEqual(req.header("x-admin-token") ?? "", config.ADMIN_TOKEN!);
+const hasIngestToken = (req: Request) =>
+  Boolean(config.INGEST_TOKEN) && safeEqual(req.header("authorization")?.replace(/^Bearer\s+/i, "") ?? "", config.INGEST_TOKEN!);
+
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
   if (!config.ADMIN_TOKEN) return res.status(403).json({ error: "ADMIN_TOKEN is not set on the server, so state-changing actions are disabled." });
-  const got = req.header("x-admin-token") ?? "";
-  if (!safeEqual(got, config.ADMIN_TOKEN)) return res.status(401).json({ error: "Admin token required for this action." });
+  if (!isAdmin(req)) return res.status(401).json({ error: "Admin token required for this action." });
   next();
+}
+
+/** Operator data (payouts, ledger, claims, packages). Readable by anyone only when DASHBOARD_ACCESS=public. */
+function operatorRead(req: Request, res: Response, next: NextFunction) {
+  if (config.DASHBOARD_ACCESS === "public" || isAdmin(req)) return next();
+  res.status(401).json({ error: "This dashboard is private. Unlock it with the server's ADMIN_TOKEN." });
+}
+
+/**
+ * Session evidence. The agent's own machine already holds INGEST_TOKEN (it writes this evidence), so the MCP
+ * tools may read it back with that token; the dashboard uses ADMIN_TOKEN.
+ */
+function sessionRead(req: Request, res: Response, next: NextFunction) {
+  if (config.DASHBOARD_ACCESS === "public" || isAdmin(req) || hasIngestToken(req)) return next();
+  res.status(401).json({ error: "This dashboard is private. Unlock it with the server's ADMIN_TOKEN." });
 }
 
 // PayPal webhooks need the exact raw body for signature verification.
@@ -82,7 +107,7 @@ app.post("/api/ingest", (req, res) => {
 });
 
 // ---------- Overview & health ----------
-app.get("/api/overview", (_req, res) => {
+app.get("/api/overview", operatorRead, (_req, res) => {
   const currency = config.TITHE_CURRENCY;
   const count = (sql: string) => Number((db().prepare(sql).get() as { n: number }).n);
   res.json({
@@ -92,6 +117,8 @@ app.get("/api/overview", (_req, res) => {
     features,
     tithe: { amount: config.TITHE_AMOUNT, currency, interval: config.TITHE_INTERVAL_UNIT },
     policy: {
+      max_topup: config.POLICY_MAX_TOPUP ?? null,
+      max_agent_topup: config.POLICY_MAX_AGENT_TOPUP ?? null,
       max_package_share: config.POLICY_MAX_PACKAGE_SHARE,
       min_payout: config.POLICY_MIN_PAYOUT,
       max_payout: config.POLICY_MAX_PAYOUT,
@@ -121,7 +148,27 @@ app.get("/api/overview", (_req, res) => {
 });
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, time: now(), features, paypal_env: config.PAYPAL_ENV, public_base_url: config.PUBLIC_BASE_URL });
+  res.json({ ok: true, time: now(), brand: config.BRAND_NAME, features, paypal_env: config.PAYPAL_ENV, public_base_url: config.PUBLIC_BASE_URL, dashboard_access: config.DASHBOARD_ACCESS });
+});
+
+// Web app manifest, named from BRAND_NAME. Icons are rendered by `npm run icons` from one vector mark.
+app.get("/api/manifest.webmanifest", (_req, res) => {
+  res.type("application/manifest+json").json({
+    name: config.BRAND_NAME,
+    short_name: config.BRAND_NAME,
+    description: `${config.BRAND_NAME} pays the open-source maintainers your AI coding agent actually relied on, through PayPal.`,
+    start_url: "/",
+    display: "standalone",
+    // The light theme's canvas colour (web/src/styles.css --canvas).
+    background_color: "#f6f6f3",
+    theme_color: "#f6f6f3",
+    icons: [
+      { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
+      { src: "/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+      { src: "/favicon.svg", sizes: "any", type: "image/svg+xml" },
+    ],
+  });
 });
 
 app.post("/api/setup/paypal", requireAdmin, async (_req, res) => {
@@ -131,7 +178,7 @@ app.post("/api/setup/paypal", requireAdmin, async (_req, res) => {
 });
 
 // ---------- Sessions & evidence ----------
-app.get("/api/sessions", (_req, res) => {
+app.get("/api/sessions", sessionRead, (_req, res) => {
   const rows = db()
     .prepare(
       `SELECT s.*, (SELECT COUNT(*) FROM evidence e WHERE e.session_id = s.id) AS evidence_count,
@@ -160,7 +207,7 @@ app.get("/api/sessions", (_req, res) => {
   );
 });
 
-app.get("/api/sessions/:id", async (req, res) => {
+app.get("/api/sessions/:id", sessionRead, async (req, res) => {
   const id = String(req.params.id);
   const session = db().prepare("SELECT * FROM sessions WHERE id = ?").get(id) as any;
   if (!session) return res.status(404).json({ error: "Unknown session" });
@@ -178,7 +225,14 @@ app.get("/api/sessions/:id", async (req, res) => {
   });
 });
 
-app.get("/api/sessions/:id/events/:eventId", (req, res) => {
+app.get("/api/sessions/:id/credits", sessionRead, (req, res) => {
+  const c = sessionCredits(String(req.params.id));
+  if (!c) return res.status(404).json({ error: "This session has no attribution yet." });
+  res.json(c);
+});
+
+// Raw payloads carry the developer's own code (file heads, Edit diffs) and commands: admin only, even when the dashboard is public.
+app.get("/api/sessions/:id/events/:eventId", requireAdmin, (req, res) => {
   const row = db()
     .prepare("SELECT * FROM hook_events WHERE session_id = ? AND id = ?")
     .get(String(req.params.id), Number(req.params.eventId)) as any;
@@ -199,6 +253,8 @@ app.post("/api/sessions/:id/active-run", requireAdmin, (req, res) => {
   const runId = String(req.body?.run_id ?? "");
   const run = runsForSession(String(req.params.id)).find((r) => r.id === runId);
   if (!run) return res.status(404).json({ error: "Unknown run" });
+  const locked = db().prepare("SELECT allocated_settlement_id FROM sessions WHERE id = ?").get(String(req.params.id)) as { allocated_settlement_id: string | null } | undefined;
+  if (locked?.allocated_settlement_id) return res.status(409).json({ error: "This session is already part of a payout; the attribution that paid it can't be swapped." });
   setActiveRun(String(req.params.id), runId);
   res.json({ ok: true });
 });
@@ -212,10 +268,10 @@ app.put("/api/sessions/:id/labels", requireAdmin, (req, res) => {
   res.json({ ok: true, count: labels.length, blind: labelsAreBlind(sid) });
 });
 
-app.get("/api/eval", (_req, res) => res.json(evalReport()));
+app.get("/api/eval", operatorRead, (_req, res) => res.json(evalReport()));
 
 // ---------- Packages & maintainers ----------
-app.get("/api/packages", (_req, res) => {
+app.get("/api/packages", operatorRead, (_req, res) => {
   const rows = db().prepare("SELECT ecosystem, name FROM packages ORDER BY name").all() as { ecosystem: Ecosystem; name: string }[];
   const currency = config.TITHE_CURRENCY;
   res.json(
@@ -251,7 +307,7 @@ app.post("/api/packages/refresh", requireAdmin, async (req, res) => {
 });
 
 // ---------- Claims ----------
-app.get("/api/claims", (_req, res) => {
+app.get("/api/claims", operatorRead, (_req, res) => {
   res.json(
     listClaims().map((c) => ({
       ...c,
@@ -298,21 +354,103 @@ app.post("/api/claims/:id/verify", async (req, res) => {
   res.json({ id: c.id, repo: c.repo, status: c.status });
 });
 
+app.get("/api/claims/paypal/start", (req, res) => {
+  const back = req.query.token ? "/claim/complete" : "/claim";
+  try {
+    res.redirect(paypalLoginStart({ token: req.query.token ? String(req.query.token) : undefined, repo: req.query.repo ? String(req.query.repo) : undefined }));
+  } catch (e) {
+    const q = new URLSearchParams({ error: (e as Error).message });
+    if (req.query.token) q.set("token", String(req.query.token));
+    if (req.query.repo) q.set("repo", String(req.query.repo));
+    res.redirect(`${back}?${q}`);
+  }
+});
+
+app.get("/api/claims/paypal/callback", async (req, res) => {
+  if (req.query.error) return res.redirect(`/claim?error=${encodeURIComponent(`PayPal sign-in was cancelled (${String(req.query.error)}).`)}`);
+  try {
+    const r = await paypalLoginCallback(String(req.query.code ?? ""), String(req.query.state ?? ""));
+    if (r.mode === "github_claim") res.redirect(`/claim/complete?done=${encodeURIComponent(r.claim.repo)}&via=paypal`);
+    else res.redirect(`/claim?funding=${encodeURIComponent(r.claim.id)}`);
+  } catch (e) {
+    res.redirect(`/claim?error=${encodeURIComponent((e as Error).message)}`);
+  }
+});
+
+app.get("/api/claims/funding/:id", (req, res) => {
+  const v = fundingClaimView(String(req.params.id));
+  if (!v) return res.status(404).json({ error: "Unknown claim" });
+  res.json(v);
+});
+
 app.get("/api/claims/public/:token", (req, res) => {
   const c = claimByToken(String(req.params.token));
   if (!c || c.method !== "funding_yml_token") return res.status(404).json({ error: "Unknown claim link" });
   res.json({ repo: c.repo, status: c.status, created_at: c.created_at, verified_at: c.verified_at, brand: config.BRAND_NAME });
 });
 
+// ---------- Public maintainer views (read-only) ----------
+const repoParam = (req: Request) => normalizeRepo(`https://github.com/${String(req.params.owner)}/${String(req.params.name).replace(/\.svg$/, "")}`);
+
+app.get("/api/public/repos", (_req, res) => res.json(reposWithMoney()));
+
+app.get("/api/public/repos/:owner/:name", (req, res) => {
+  const repo = repoParam(req);
+  const s = repo ? repoSummary(repo) : undefined;
+  if (!s) return res.status(404).json({ error: "No agent has relied on this repository yet." });
+  res.json(s);
+});
+
+app.get("/api/badge/:owner/:name", (req, res) => {
+  const repo = repoParam(req);
+  res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
+  res.setHeader("Cache-Control", "public, max-age=900");
+  res.send(badgeSvg(repo ? repoSummary(repo) : undefined));
+});
+
+app.get("/api/trail", operatorRead, (req, res) => {
+  const repo = normalizeRepo(String(req.query.repo ?? "").replace(/^(?!https?:)/, "https://"));
+  if (!repo) return res.status(400).json({ error: "Pass ?repo=github.com/owner/name" });
+  res.json(moneyTrail(repo));
+});
+
 // ---------- Funding (PayPal Subscriptions) ----------
-app.get("/api/funding", (_req, res) => {
+app.get("/api/funding", operatorRead, (_req, res) => {
   res.json({
     subscription: currentSubscription() ?? null,
     plan_id: activePlanId() ?? null,
     product_id: getSetting("paypal.product_id") ?? null,
     tithe: { amount: config.TITHE_AMOUNT, currency: config.TITHE_CURRENCY, interval: config.TITHE_INTERVAL_UNIT },
     pool: poolSummary(config.TITHE_CURRENCY),
+    topups: listTopups().map((t) => ({ ...t, approve_url: t.status === "CREATED" || t.status === "PAYER_ACTION_REQUIRED" ? t.approve_url : null, amount: fromMinor(t.amount_minor, t.currency) })),
+    topup_policy: {
+      max: config.POLICY_MAX_TOPUP ?? null,
+      agent: agentAllowance() && { ...agentAllowance()!, cap: fromMinor(agentAllowance()!.cap_minor, config.TITHE_CURRENCY), left: fromMinor(agentAllowance()!.left_minor, config.TITHE_CURRENCY) },
+    },
   });
+});
+
+// ---------- One-time top-ups (PayPal Orders v2) ----------
+app.post("/api/funding/topup", requireAdmin, async (req, res) => {
+  const source = req.body?.source === "agent" ? "agent" : "dashboard";
+  const t = await startTopup({ amount: String(req.body?.amount ?? ""), source, note: req.body?.note ? String(req.body.note) : undefined });
+  res.json({ id: t.id, order_id: t.order_id, approveUrl: t.approve_url, amount: fromMinor(t.amount_minor, t.currency), currency: t.currency, source: t.source });
+});
+
+// PayPal sends the payer back here after approval; capture happens server side, then the Funding page shows the result.
+app.get("/api/funding/topup/return", async (req, res) => {
+  const id = String(req.query.topup ?? "");
+  try {
+    const t = await captureTopup(id);
+    res.redirect(`/funding?topup=${encodeURIComponent(id)}&capture=${encodeURIComponent(t.capture_status ?? t.status)}`);
+  } catch (e) {
+    res.redirect(`/funding?error=${encodeURIComponent((e as Error).message)}`);
+  }
+});
+
+app.post("/api/funding/topup/:id/sync", requireAdmin, async (req, res) => {
+  const t = await syncTopup(String(req.params.id));
+  res.json({ ...t, approve_url: undefined, amount: fromMinor(t.amount_minor, t.currency) });
 });
 
 app.post("/api/funding/subscribe", requireAdmin, async (_req, res) => {
@@ -347,6 +485,9 @@ function settlementView(id: string) {
     .all(id, id) as any[];
   return {
     ...s,
+    planned: fromMinor(s.planned_minor, s.currency),
+    reserved: fromMinor(s.reserved_minor, s.currency),
+    fee_reserve: fromMinor(s.fee_reserve_minor, s.currency),
     policy: json(s.policy_json, {}),
     error: json(s.error_json, null),
     request: json(s.request_json, null),
@@ -364,11 +505,11 @@ function settlementView(id: string) {
   };
 }
 
-app.get("/api/settlements", (_req, res) => {
+app.get("/api/settlements", operatorRead, (_req, res) => {
   const rows = db().prepare("SELECT id FROM settlements WHERE status != 'empty' ORDER BY created_at DESC").all() as { id: string }[];
   res.json(rows.map((r) => settlementView(r.id)));
 });
-app.get("/api/settlements/:id", (req, res) => {
+app.get("/api/settlements/:id", operatorRead, (req, res) => {
   const v = settlementView(String(req.params.id));
   if (!v) return res.status(404).json({ error: "Unknown settlement" });
   res.json(v);
@@ -403,8 +544,11 @@ app.post("/api/jobs/housekeeping", requireAdmin, async (_req, res) => {
   res.json(await housekeeping());
 });
 
+// ---------- Self-audit ----------
+app.get("/api/audit", operatorRead, (_req, res) => res.json(auditReport()));
+
 // ---------- Ledger ----------
-app.get("/api/ledger", (_req, res) => {
+app.get("/api/ledger", operatorRead, (_req, res) => {
   const currency = config.TITHE_CURRENCY;
   res.json({
     summary: poolSummary(currency),
@@ -429,7 +573,14 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 const webDist = path.join(repoRoot, "web", "dist");
 if (fs.existsSync(webDist)) {
   app.use(express.static(webDist, { index: false, maxAge: "1h" }));
-  app.get(/^(?!\/api\/).*/, (_req, res) => res.sendFile(path.join(webDist, "index.html")));
+  // The built page names the product from BRAND_NAME, so the title is right before any script runs.
+  const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+  const page = fs
+    .readFileSync(path.join(webDist, "index.html"), "utf8")
+    .replace(/<title>[^<]*<\/title>/, () => `<title>${esc(config.BRAND_NAME)}</title>`)
+    .replace(/(<meta name="description" content=")[^"]*(")/, (_m, a: string, b: string) =>
+      `${a}${esc(`${config.BRAND_NAME} pays the open-source maintainers your AI coding agent actually relied on, through PayPal.`)}${b}`);
+  app.get(/^(?!\/api\/).*/, (_req, res) => res.type("html").send(page));
 }
 
 app.listen(config.PORT, () => {

@@ -20,9 +20,11 @@ function loadConfig() {
   try {
     file = JSON.parse(fs.readFileSync(path.join(HOME, "config.json"), "utf8"));
   } catch {}
+  // Installed as a Claude Code plugin, the URL and token arrive as plugin options (userConfig server_url / ingest_token).
+  const opt = (k) => process.env[`CLAUDE_PLUGIN_OPTION_${k}`] || undefined;
   return {
-    url: process.env.UPSTREAM_URL ?? file.url,
-    token: process.env.UPSTREAM_INGEST_TOKEN ?? file.token,
+    url: process.env.UPSTREAM_URL ?? opt("SERVER_URL") ?? file.url,
+    token: process.env.UPSTREAM_INGEST_TOKEN ?? opt("INGEST_TOKEN") ?? file.token,
   };
 }
 
@@ -140,23 +142,57 @@ async function post(cfg, body) {
 }
 
 function spool(payload) {
-  try {
-    fs.mkdirSync(HOME, { recursive: true });
-    fs.appendFileSync(SPOOL, JSON.stringify(payload) + "\n");
-  } catch {}
+  spoolLines([payload]);
 }
 
 async function flushSpool(cfg) {
-  let lines;
+  // Async hooks run in parallel: take the spool by renaming it, so two processes never send or rewrite the same
+  // lines, and an event appended meanwhile lands in a fresh spool instead of being overwritten.
+  const claimed = `${SPOOL}.${process.pid}.${Date.now()}.sending`;
   try {
-    lines = fs.readFileSync(SPOOL, "utf8").split("\n").filter(Boolean);
+    // A hook killed mid-send leaves its claimed file behind; after 10 minutes it goes back into the spool.
+    for (const f of fs.readdirSync(HOME)) {
+      const p = path.join(HOME, f);
+      if (f.startsWith("spool.jsonl.") && f.endsWith(".sending") && Date.now() - fs.statSync(p).mtimeMs > 600_000) {
+        fs.appendFileSync(SPOOL, fs.readFileSync(p, "utf8"));
+        fs.rmSync(p, { force: true });
+      }
+    }
+  } catch {}
+  try {
+    fs.renameSync(SPOOL, claimed);
   } catch {
-    return;
+    return; // nothing spooled, or another hook process is flushing it
   }
-  if (!lines.length) return;
-  const batch = lines.slice(0, 200).map((l) => JSON.parse(l));
-  await post(cfg, batch);
-  fs.writeFileSync(SPOOL, lines.slice(200).map((l) => l + "\n").join(""));
+  let lines = [];
+  try {
+    lines = fs.readFileSync(claimed, "utf8").split("\n").filter(Boolean);
+  } catch {}
+  // A line cut short by a crash is dropped instead of blocking every later flush.
+  const events = lines.flatMap((l) => {
+    try {
+      return [JSON.parse(l)];
+    } catch {
+      return [];
+    }
+  });
+  let sent = 0;
+  try {
+    for (; sent < events.length; sent += 200) await post(cfg, events.slice(sent, sent + 200));
+  } finally {
+    const rest = events.slice(sent);
+    if (rest.length) spoolLines(rest);
+    try {
+      fs.rmSync(claimed, { force: true });
+    } catch {}
+  }
+}
+
+function spoolLines(payloads) {
+  try {
+    fs.mkdirSync(HOME, { recursive: true });
+    fs.appendFileSync(SPOOL, payloads.map((p) => JSON.stringify(p) + "\n").join(""));
+  } catch {}
 }
 
 async function main() {
@@ -218,4 +254,8 @@ if (process.argv[2] === "--warm-python") {
   process.exit(0);
 }
 
-main().catch(() => {}).finally(() => process.exit(0));
+// End by letting the event loop drain, not with process.exit(): on Windows, exiting while fetch's sockets
+// are still closing trips a libuv assertion (UV_HANDLE_CLOSING) and the hook reports a crash exit code.
+main().catch(() => {}).finally(() => {
+  process.exitCode = 0;
+});

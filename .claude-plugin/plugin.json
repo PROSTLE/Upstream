@@ -1,0 +1,42 @@
+{
+  "name": "upstream-oss",
+  "displayName": "Upstream",
+  "version": "0.1.0",
+  "description": "Records which open-source packages your coding agent really relied on and lets you pay their verified maintainers through PayPal.",
+  "author": { "name": "Upstream contributors" },
+  "license": "MIT",
+  "keywords": ["open-source", "funding", "paypal", "attribution"],
+  "hooks": "./hook/hooks.json",
+  "mcpServers": {
+    "upstream": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/src/index.ts"],
+      "env": {
+        "UPSTREAM_URL": "${user_config.server_url}",
+        "UPSTREAM_INGEST_TOKEN": "${user_config.ingest_token}",
+        "UPSTREAM_ADMIN_TOKEN": "${user_config.admin_token}"
+      }
+    }
+  },
+  "userConfig": {
+    "server_url": {
+      "type": "string",
+      "title": "Upstream server URL",
+      "description": "The server's PUBLIC_BASE_URL, for example https://your-upstream.onrender.com",
+      "required": true
+    },
+    "ingest_token": {
+      "type": "string",
+      "title": "Ingest token",
+      "description": "The server's INGEST_TOKEN. The hook sends it with every event, and the agent's tools use it to read this machine's session evidence back.",
+      "sensitive": true,
+      "required": true
+    },
+    "admin_token": {
+      "type": "string",
+      "title": "Admin token (optional)",
+      "description": "The server's ADMIN_TOKEN. Only needed for the agent tools that plan payouts or request a top-up. Leave empty to keep the agent read-only.",
+      "sensitive": true
+    }
+  }
+}

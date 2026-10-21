@@ -64,3 +64,42 @@ test(
     }
   },
 );
+
+test("spool flush skips a torn line, sends the rest once and keeps nothing behind", async () => {
+  const { createServer } = await import("node:http");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "upstream-spool-"));
+  const dir = path.join(home, ".upstream");
+  fs.mkdirSync(dir);
+  const spool = path.join(dir, "spool.jsonl");
+  const queued = [{ hook_event_name: "Stop", session_id: "s1" }, { hook_event_name: "Stop", session_id: "s2" }];
+  // The second line is cut short, as after a crash mid-append; it used to block every later flush.
+  fs.writeFileSync(spool, `${JSON.stringify(queued[0])}\n{"hook_event_name":"Sto\n${JSON.stringify(queued[1])}\n`);
+  const received: any[] = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const b = JSON.parse(body);
+      received.push(...(Array.isArray(b) ? b : [b]));
+      res.writeHead(200, { "content-type": "application/json" }).end("{}");
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address() as { port: number };
+  try {
+    const { execFile } = await import("node:child_process");
+    await new Promise<void>((resolve, reject) =>
+      execFile(
+        process.execPath,
+        [hook],
+        { env: { ...process.env, HOME: home, USERPROFILE: home, UPSTREAM_URL: `http://127.0.0.1:${port}`, UPSTREAM_INGEST_TOKEN: "t" }, timeout: 30_000 },
+        (err) => (err ? reject(err) : resolve()),
+      ).stdin!.end(JSON.stringify({ hook_event_name: "Stop", session_id: "s3", cwd: home })),
+    );
+    assert.deepEqual(received.map((e) => e.session_id).sort(), ["s1", "s2", "s3"]);
+    assert.equal(fs.existsSync(spool) ? fs.readFileSync(spool, "utf8") : "", "", "spool is empty after a successful flush");
+    assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith(".sending")), [], "no claimed file is left behind");
+  } finally {
+    server.close();
+  }
+});

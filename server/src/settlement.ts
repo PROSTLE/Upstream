@@ -4,6 +4,7 @@ import { markReceiverUnclaimed, payableClaim } from "./claims.ts";
 import { config } from "./config.ts";
 import { db, json, newId, now, tx } from "./db.ts";
 import { syncKnownSubscriptions } from "./funding.ts";
+import { syncOpenTopups } from "./topups.ts";
 import { book, poolSummary } from "./ledger.ts";
 import { fromMinor, splitByWeights, toMinor } from "./money.ts";
 import { PayPalError } from "./paypal/client.ts";
@@ -167,7 +168,7 @@ export function planSettlement(): { settlementId: string } {
         repo: bucket.repo,
         receiver: claim.paypal_receiver!,
         amount: total,
-        note: `Upstream: thanks for ${[...packages].slice(0, 4).join(", ")}${packages.size > 4 ? " and more" : ""} (${bucket.repo})`.slice(0, 4000),
+        note: `${config.BRAND_NAME}: thanks for ${[...packages].slice(0, 4).join(", ")}${packages.size > 4 ? " and more" : ""} (${bucket.repo})`.slice(0, 4000),
         planned,
         reservedIncluded,
       });
@@ -180,7 +181,8 @@ export function planSettlement(): { settlementId: string } {
 
     checks.push(
       { id: "pool", label: "Funds confirmed by PayPal", ok: pool.balance > 0, detail: `Pool balance ${fromMinor(pool.balance, currency)} ${currency}; available ${fromMinor(pool.available, currency)}.` },
-      { id: "budget", label: "Within budget incl. fee reserve", ok: newMoney + Number(plannedReserve) + feeReserve <= pool.available, detail: `New allocations ${fromMinor(newMoney + Number(plannedReserve), currency)} + fee reserve ${fromMinor(feeReserve, currency)} ≤ available ${fromMinor(pool.available, currency)}.` },
+      // Compared with the unclamped headroom: if PayPal's fees or a refund already left held money uncovered, even paying out held money must wait for funds.
+      { id: "budget", label: "Within budget incl. fee reserve", ok: newMoney + Number(plannedReserve) + feeReserve <= pool.headroom, detail: pool.headroom < 0 ? `Held and in-flight money exceeds the PayPal-confirmed balance by ${fromMinor(-pool.headroom, currency)}; add funds before paying out.` : `New allocations ${fromMinor(newMoney + Number(plannedReserve), currency)} + fee reserve ${fromMinor(feeReserve, currency)} ≤ available ${fromMinor(pool.headroom, currency)}.` },
       { id: "receivers", label: "Every receiver is a verified maintainer", ok: items.every((i) => payableClaim(i.repo)?.id === i.claim_id), detail: `${items.length} item(s), each tied to a verified claim.` },
       { id: "item_cap", label: `Each item ≤ ${config.POLICY_MAX_PAYOUT} ${currency}`, ok: items.every((i) => i.amount <= maxPayout), detail: "Per-item maximum enforced in code." },
       { id: "item_min", label: `Each item ≥ ${config.POLICY_MIN_PAYOUT} ${currency}`, ok: items.every((i) => i.amount >= minPayout), detail: "Smaller amounts carry over for that maintainer." },
@@ -268,7 +270,13 @@ export function approveSettlement(settlementId: string) {
       .flatMap((r) => json<{ reserved: string[] }>(r.allocation_ids_json, { reserved: [] }).reserved)
       .reduce((a, id) => a + Number((db().prepare("SELECT amount_minor FROM allocations WHERE id = ?").get(id) as any)?.amount_minor ?? 0), 0);
     const needed = s.planned_minor - reservedIncludedTotal + s.reserved_minor + s.fee_reserve_minor;
-    if (needed > pool.available) throw new Error(`Pool changed: need ${fromMinor(needed, s.currency)}, available ${fromMinor(pool.available, s.currency)}. Re-plan.`);
+    if (needed > pool.headroom) {
+      throw new Error(
+        pool.headroom < 0
+          ? `Held and in-flight money exceeds the PayPal-confirmed balance by ${fromMinor(-pool.headroom, s.currency)} (PayPal's fees or a refund). Add funds, then re-plan.`
+          : `Pool changed: need ${fromMinor(needed, s.currency)}, available ${fromMinor(pool.headroom, s.currency)}. Re-plan.`,
+      );
+    }
 
     db().prepare("UPDATE allocations SET status = CASE target WHEN 'payout' THEN 'in_batch' ELSE 'reserved' END, updated_at = ? WHERE settlement_id = ? AND status = 'planned'").run(now(), settlementId);
     for (const it of db().prepare("SELECT sender_item_id, allocation_ids_json FROM payout_items WHERE settlement_id = ?").all(settlementId) as any[]) {
@@ -279,9 +287,10 @@ export function approveSettlement(settlementId: string) {
     }
     for (const sid of policy.sessions) db().prepare("UPDATE sessions SET allocated_settlement_id = ? WHERE id = ?").run(settlementId, sid);
     const hasItems = (db().prepare("SELECT COUNT(*) AS n FROM payout_items WHERE settlement_id = ?").get(settlementId) as any).n > 0;
+    // A run with nothing payable only earmarks money for unclaimed repos: it is "held", never "sent", since PayPal is not called.
     db()
       .prepare("UPDATE settlements SET status = ?, approved_at = ?, request_json = ? WHERE id = ?")
-      .run(hasItems ? "approved" : "sent", now(), hasItems ? JSON.stringify(buildRequest(settlementId)) : null, settlementId);
+      .run(hasItems ? "approved" : "held", now(), hasItems ? JSON.stringify(buildRequest(settlementId)) : null, settlementId);
   });
 }
 
@@ -410,7 +419,10 @@ export async function cancelUnclaimed(senderItemId: string, opts: { manual: bool
 /** Runs on an interval: sync open batches, cancel stale UNCLAIMED items per policy. */
 export async function housekeeping() {
   const open = db()
-    .prepare("SELECT id FROM settlements WHERE status = 'sent' AND COALESCE(batch_status,'') NOT IN ('SUCCESS','DENIED','CANCELED') OR (status = 'sent' AND id IN (SELECT settlement_id FROM payout_items WHERE transaction_status IN ('UNCLAIMED','PENDING','ONHOLD')))")
+    .prepare(
+      `SELECT id FROM settlements WHERE status = 'sent' AND payout_batch_id IS NOT NULL AND (COALESCE(batch_status,'') NOT IN ('SUCCESS','DENIED','CANCELED')
+         OR id IN (SELECT settlement_id FROM payout_items WHERE transaction_status IN ('UNCLAIMED','PENDING','ONHOLD')))`,
+    )
     .all() as { id: string }[];
   const out: Record<string, unknown> = {};
   for (const s of open) {
@@ -422,6 +434,7 @@ export async function housekeeping() {
   }
   // Funding is re-read from PayPal too, so payments and refunds are booked even if a webhook never arrives.
   Object.assign(out, await syncKnownSubscriptions());
+  Object.assign(out, await syncOpenTopups());
   const stale = db()
     .prepare("SELECT sender_item_id FROM payout_items WHERE transaction_status = 'UNCLAIMED' AND status_changed_at < ?")
     .all(new Date(Date.now() - days(config.POLICY_CANCEL_UNCLAIMED_AFTER_DAYS)).toISOString()) as { sender_item_id: string }[];

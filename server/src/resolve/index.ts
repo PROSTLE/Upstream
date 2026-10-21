@@ -105,6 +105,15 @@ export async function fetchFundingYml(repo: string): Promise<{ path: string; par
       }
       return { path: p, parsed, raw };
     }
+    // Only a 404 means "not here". A rate limit or outage must not read as "this repo has no FUNDING.yml".
+    if (res.status !== 404) {
+      const remaining = res.headers.get("x-ratelimit-remaining");
+      throw new Error(
+        remaining === "0"
+          ? `GitHub's API rate limit is used up${config.GITHUB_TOKEN ? "" : " (set GITHUB_TOKEN for a higher limit)"}; try again later.`
+          : `GitHub answered HTTP ${res.status} while reading ${p} in ${repo}.`,
+      );
+    }
   }
   return undefined;
 }

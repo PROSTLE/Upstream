@@ -1,23 +1,27 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowLeft, Ban, Braces, CheckCheck, FileJson, HandCoins, Hourglass, ListChecks, RefreshCw, Repeat2, Send, ShieldCheck, X,
+  ArrowLeft, Ban, Braces, CheckCheck, FileJson, HandCoins, Hourglass, ListChecks, RefreshCw, Repeat2, Route, Send, ShieldCheck, TerminalSquare, X,
 } from "lucide-react";
 import type { ColDef } from "ag-grid-community";
 import { api, useApi } from "../api.ts";
-import { dateTime, money, moneyStr, shortId } from "../format.ts";
-import { ActionButton, BrandIcon, Card, CheckRow, Empty, ErrorBox, Loading, PageHead, Status, useToast } from "../ui.tsx";
+import { dateTime, money, moneyStr, shortId, plural } from "../format.ts";
+import { ActionButton, BrandIcon, Card, CheckRow, Empty, ErrorBox, Loading, Modal, PageHead, Status, Stepper, useToast } from "../ui.tsx";
 import { Grid } from "../data.tsx";
+import { TrailDrawer } from "../trail.tsx";
+import { useBrand } from "../brand.tsx";
 
 export function Settlements() {
+  const brand = useBrand();
   const { data, error, loading } = useApi<any[]>("/api/settlements");
   const nav = useNavigate();
   const toast = useToast();
   return (
     <div className="page">
       <PageHead
+        eyebrow="Step 4 · Money out"
         title="Payouts"
-        subtitle="Each settlement becomes one PayPal Payouts batch with a fixed sender_batch_id. You approve it; code enforces the budget, caps and verified receivers."
+        subtitle={`Each run becomes one PayPal Payouts batch with a fixed sender_batch_id. ${brand} proposes it, code enforces the budget, caps and verified receivers, and you approve it.`}
         actions={
           <ActionButton
             className="btn primary"
@@ -35,8 +39,8 @@ export function Settlements() {
       {error && <ErrorBox error={error} />}
       {loading && !data ? <Loading /> : !data?.length ? (
         <Card>
-          <Empty icon={<Send size={22} />} title="No payouts yet">
-            Attribute a session, make sure at least one maintainer has claimed their repo, then plan a payout.
+          <Empty icon={<Send size={22} />} title="No payouts yet" action={<Link className="btn" to="/sessions"><TerminalSquare size={15} />Attribute a session</Link>}>
+            Plan a payout once a session is attributed. Shares for repos whose maintainer hasn't verified yet are held, never paid to an unverified address.
           </Empty>
         </Card>
       ) : (
@@ -57,7 +61,7 @@ export function Settlements() {
                 <div><div className="muted small">Held</div><div className="num" style={{ fontSize: 20, fontWeight: 650, color: "var(--amber)" }}>{money(s.reserved_minor, s.currency)}</div></div>
               </div>
               <div className="row small muted" style={{ gap: 8 }}>
-                <span>{s.items.length} payout item(s)</span>·<span>{s.policy?.sessions?.length ?? 0} session(s)</span>
+                <span>{plural(s.items.length, "payout item")}</span>·<span>{plural(s.policy?.sessions?.length ?? 0, "session")}</span>
                 {s.batch_status && <><span>·</span><Status value={s.batch_status} /></>}
               </div>
             </Link>
@@ -69,18 +73,43 @@ export function Settlements() {
 }
 
 export function SettlementDetail() {
+  const brand = useBrand();
   const { id = "" } = useParams();
   const { data: s, error, loading, reload, setData } = useApi<any>(`/api/settlements/${encodeURIComponent(id)}`, [id]);
   const toast = useToast();
   const [replay, setReplay] = useState<any>(null);
   const [showRequest, setShowRequest] = useState(false);
+  const [trail, setTrail] = useState<string | null>(null);
   if (loading && !s) return <div className="page"><Loading /></div>;
   if (error || !s) return <div className="page"><ErrorBox error={error ?? "Unknown settlement"} /></div>;
   const cur = s.currency;
   const checks = s.policy?.checks ?? [];
+  const n = s.items.length;
+  const total = money(s.planned_minor, cur);
+  const receivers = (
+    <div className="summary">
+      {s.items.map((i: any) => (
+        <div key={i.sender_item_id} className="line-row">
+          <span className="row" style={{ gap: 6, minWidth: 0 }}><BrandIcon name="github" size={13} />{i.repo.replace("github.com/", "")}<span className="muted small">{i.receiver}</span></span>
+          <strong className="num">{moneyStr(i.amount, cur)}</strong>
+        </div>
+      ))}
+      <div className="line-row"><span className="muted">Held for unclaimed repos (not sent)</span><span className="num">{money(s.reserved_minor, cur)}</span></div>
+      <div className="line-row"><span className="muted">Fee reserve (actual PayPal fees read back)</span><span className="num">{money(s.fee_reserve_minor, cur)}</span></div>
+    </div>
+  );
+  const failed = s.status === "failed" || s.batch_status === "DENIED";
+  const stage = s.status === "draft" ? 0 : s.status === "approved" || s.status === "sending" ? 1 : s.batch_status === "SUCCESS" ? 4 : 2;
 
   const itemCols: ColDef<any>[] = [
-    { headerName: "Repository", field: "repo", minWidth: 220, cellRenderer: (p: any) => <span className="row" style={{ gap: 6, height: "100%" }}><BrandIcon name="github" size={13} mono />{p.value.replace("github.com/", "")}</span> },
+    {
+      headerName: "Repository", field: "repo", minWidth: 220,
+      cellRenderer: (p: any) => (
+        <button className="btn ghost sm" style={{ paddingLeft: 0 }} title="Why this amount?" onClick={() => setTrail(p.value)}>
+          <BrandIcon name="github" size={13} mono />{p.value.replace("github.com/", "")}<Route size={12} color="var(--muted)" />
+        </button>
+      ),
+    },
     { headerName: "Receiver", field: "receiver", minWidth: 170 },
     { headerName: "Amount", field: "amount", maxWidth: 130, type: "numericColumn", cellClass: "num", valueFormatter: (p) => moneyStr(p.value, cur) },
     { headerName: "PayPal status", field: "transaction_status", maxWidth: 160, cellRenderer: (p: any) => <Status value={p.value ?? (s.status === "sent" ? "PENDING" : null)} /> },
@@ -98,6 +127,13 @@ export function SettlementDetail() {
         p.value === "UNCLAIMED" ? (
           <ActionButton
             className="btn sm danger"
+            confirm={{
+              title: "Cancel this unclaimed payout?",
+              body: <p>PayPal returns <strong>{moneyStr(p.data.amount, cur)}</strong> to the pool. {brand} holds it for <strong>{p.data.repo.replace("github.com/", "")}</strong> and flags the claim so the maintainer can fix their PayPal email.</p>,
+              confirmLabel: `Cancel ${moneyStr(p.data.amount, cur)} payout`,
+              tone: "danger",
+              icon: <Ban size={17} />,
+            }}
             onRun={async () => {
               await api(`/api/payout-items/${encodeURIComponent(p.data.sender_item_id)}/cancel`, { body: {}, admin: true });
               toast("Cancelled in PayPal. The money is back in the pool and held for this repo.");
@@ -111,7 +147,10 @@ export function SettlementDetail() {
   ];
   const allocCols: ColDef<any>[] = [
     { headerName: "Package", field: "package", minWidth: 150 },
-    { headerName: "Repository", field: "repo", minWidth: 200, valueFormatter: (p) => p.value?.replace("github.com/", "") ?? "—" },
+    {
+      headerName: "Repository", field: "repo", minWidth: 200,
+      cellRenderer: (p: any) => p.value ? <button className="btn ghost sm" style={{ paddingLeft: 0 }} title="Why this amount?" onClick={() => setTrail(p.value)}>{p.value.replace("github.com/", "")}<Route size={12} color="var(--muted)" /></button> : "—",
+    },
     { headerName: "Amount", field: "amount", maxWidth: 130, type: "numericColumn", cellClass: "num", valueFormatter: (p) => moneyStr(p.value, cur) },
     { headerName: "State", field: "status", maxWidth: 140, cellRenderer: (p: any) => <Status value={p.value} /> },
     { headerName: "Becomes", field: "target", maxWidth: 120 },
@@ -121,7 +160,7 @@ export function SettlementDetail() {
 
   return (
     <div className="page">
-      <Link to="/settlements" className="row muted small" style={{ gap: 6 }}><ArrowLeft size={14} />All payouts</Link>
+      <Link to="/settlements" className="back-link"><ArrowLeft size={14} />All payouts</Link>
       <PageHead
         title={<span className="row" style={{ gap: 10 }}>Payout {dateTime(s.created_at)} <Status value={s.status} /></span>}
         subtitle={<>sender_batch_id <code>{s.sender_batch_id}</code>{s.payout_batch_id && <> · PayPal batch <code>{s.payout_batch_id}</code></>}</>}
@@ -129,22 +168,56 @@ export function SettlementDetail() {
           <>
             {s.status === "draft" && (
               <>
-                <ActionButton className="btn" onRun={async () => { await api("/api/settlements/discard-drafts", { body: {}, admin: true }); toast("Draft discarded."); history.back(); }}>
+                <ActionButton
+                  className="btn"
+                  confirm={{ title: "Discard this draft?", body: <p>Nothing has been sent. The draft's allocations are deleted, and you can plan again at any time.</p>, confirmLabel: "Discard draft", tone: "danger", icon: <X size={17} /> }}
+                  onRun={async () => { await api("/api/settlements/discard-drafts", { body: {}, admin: true }); toast("Draft discarded."); history.back(); }}
+                >
                   <X size={15} />Discard
                 </ActionButton>
-                <ActionButton className="btn primary" disabled={checks.some((c: any) => !c.ok)} onRun={async () => { setData(await api(`/api/settlements/${id}/approve`, { body: {}, admin: true })); toast("Approved. Allocations are now earmarked."); }}>
-                  <CheckCheck size={15} />Approve
+                <ActionButton
+                  className="btn primary"
+                  disabled={checks.some((c: any) => !c.ok)}
+                  title={checks.some((c: any) => !c.ok) ? "A policy check failed; see Policy checks" : undefined}
+                  confirm={{
+                    title: n ? `Approve ${total} to ${n} maintainer${n === 1 ? "" : "s"}?` : "Approve this run?",
+                    body: <div className="stack"><p>Approving freezes the exact PayPal request and earmarks the money. Nothing is sent until you press <strong>Send with PayPal Payouts</strong>.</p>{receivers}</div>,
+                    confirmLabel: n ? `Approve ${total}` : "Approve",
+                    icon: <CheckCheck size={17} />,
+                  }}
+                  onRun={async () => {
+                    const r = await api<any>(`/api/settlements/${id}/approve`, { body: {}, admin: true });
+                    setData(r);
+                    toast(r.status === "held" ? "Approved. Nothing to send: the shares are held for unclaimed repos." : "Approved. Allocations are now earmarked.");
+                  }}
+                >
+                  <CheckCheck size={15} />Approve {n ? total : ""}
                 </ActionButton>
               </>
             )}
             {(s.status === "approved" || s.status === "sending") && (
-              <ActionButton className="btn primary" onRun={async () => { const r = await api<any>(`/api/settlements/${id}/execute`, { body: {}, admin: true }); setData(r.settlement); toast(`PayPal accepted batch ${r.result.payout_batch_id}.`); }}>
-                <BrandIcon name="paypal" size={15} mono />{s.status === "sending" ? "Retry send (same batch id)" : "Send with PayPal Payouts"}
+              <ActionButton
+                className="btn paypal"
+                confirm={{
+                  title: `Send ${total} to ${n} maintainer${n === 1 ? "" : "s"} with PayPal?`,
+                  body: (
+                    <div className="stack">
+                      <p>This calls <code>POST /v1/payments/payouts</code> with <code>sender_batch_id {s.sender_batch_id}</code>. Money leaves the pool. If the network fails, retrying is safe: PayPal completes a batch id only once.</p>
+                      {receivers}
+                    </div>
+                  ),
+                  confirmLabel: <><BrandIcon name="paypal" size={15} mono />Send {total}</>,
+                  tone: "paypal",
+                  icon: <Send size={17} />,
+                }}
+                onRun={async () => { const r = await api<any>(`/api/settlements/${id}/execute`, { body: {}, admin: true }); setData(r.settlement); toast(`PayPal accepted batch ${r.result.payout_batch_id}.`); }}
+              >
+                <BrandIcon name="paypal" size={15} mono />{s.status === "sending" ? "Retry send (same batch id)" : `Send ${total} with PayPal Payouts`}
               </ActionButton>
             )}
             {s.status === "sent" && (
               <>
-                <ActionButton className="btn" onRun={async () => { const r = await api<any>(`/api/settlements/${id}/sync`, { body: {}, admin: true }); setData(r.settlement); toast(`Batch ${r.result.batch_status}; ${r.result.matched} item(s) updated.`); }}>
+                <ActionButton className="btn" onRun={async () => { const r = await api<any>(`/api/settlements/${id}/sync`, { body: {}, admin: true }); setData(r.settlement); toast(`Batch ${r.result.batch_status}; ${plural(r.result.matched, "item")} updated.`); }}>
                   <RefreshCw size={15} />Sync from PayPal
                 </ActionButton>
                 <ActionButton className="btn" title="Re-send the identical batch to prove PayPal rejects a reused sender_batch_id" onRun={async () => setReplay(await api(`/api/settlements/${id}/replay`, { body: {}, admin: true }))}>
@@ -155,6 +228,17 @@ export function SettlementDetail() {
           </>
         }
       />
+
+      {s.status === "held" ? (
+        <div className="callout amber">
+          <Hourglass size={18} color="var(--amber)" />
+          <div>Approved with nothing to send: every share in this run is held for repositories whose maintainer hasn't verified yet. PayPal was not called. The money goes out in a later run once a maintainer verifies, or returns to the pool when the hold expires.</div>
+        </div>
+      ) : (
+        <div className="card card-pad">
+          <Stepper steps={["Draft: review checks", "Approved: request frozen", "Sent to PayPal", "Settled by PayPal"]} current={failed ? Math.max(stage, 2) : stage} failed={failed} />
+        </div>
+      )}
 
       {s.error && (
         <ErrorBox error={s.error.retryable ? `Last attempt hit a network or 5xx error. Retrying is safe: ${s.error.message}` : `PayPal ${s.error.status ?? ""}: ${JSON.stringify(s.error.body ?? s.error)}`} />
@@ -189,34 +273,23 @@ export function SettlementDetail() {
       </Card>
 
       {replay && (
-        <div className="modal-back" onClick={() => setReplay(null)}>
-          <div className="modal" style={{ maxWidth: 720 }} onClick={(e) => e.stopPropagation()}>
-            <div className="card-head">
-              <div className={`icon-tile ${replay.rejected ? "green" : "red"}`}><Braces size={17} /></div>
-              <div>
-                <h2>{replay.rejected ? "PayPal rejected the duplicate batch" : "PayPal accepted the replay"}</h2>
-                <div className="sub">Same body and sender_batch_id, new PayPal-Request-Id · HTTP {replay.status}{replay.debug_id ? ` · debug ${replay.debug_id}` : ""}</div>
-              </div>
-              <div className="spacer" />
-              <button className="btn ghost sm" onClick={() => setReplay(null)}><X size={16} /></button>
-            </div>
-            <div className="card-body"><pre className="json">{JSON.stringify(replay.body, null, 2)}</pre></div>
-          </div>
-        </div>
+        <Modal
+          width={720}
+          title={replay.rejected ? "PayPal rejected the duplicate batch" : "PayPal accepted the replay"}
+          sub={`Same body and sender_batch_id, new PayPal-Request-Id · HTTP ${replay.status}${replay.debug_id ? ` · debug ${replay.debug_id}` : ""}`}
+          icon={<Braces size={17} />}
+          tone={replay.rejected ? "green" : "red"}
+          onClose={() => setReplay(null)}
+        >
+          <pre className="json">{JSON.stringify(replay.body, null, 2)}</pre>
+        </Modal>
       )}
       {showRequest && (
-        <div className="modal-back" onClick={() => setShowRequest(false)}>
-          <div className="modal" style={{ maxWidth: 720 }} onClick={(e) => e.stopPropagation()}>
-            <div className="card-head">
-              <div className="icon-tile"><FileJson size={17} /></div>
-              <div><h2>POST /v1/payments/payouts</h2><div className="sub">Frozen at approval so every retry is byte-identical</div></div>
-              <div className="spacer" />
-              <button className="btn ghost sm" onClick={() => setShowRequest(false)}><X size={16} /></button>
-            </div>
-            <div className="card-body"><pre className="json">{JSON.stringify(s.request, (k, v) => (k === "receiver" ? String(v).replace(/^(.).*(@.*)$/, "$1•••$2") : v), 2)}</pre></div>
-          </div>
-        </div>
+        <Modal width={720} title="POST /v1/payments/payouts" sub="Frozen at approval so every retry is byte-identical" icon={<FileJson size={17} />} onClose={() => setShowRequest(false)}>
+          <pre className="json">{JSON.stringify(s.request, (k, v) => (k === "receiver" ? String(v).replace(/^(.).*(@.*)$/, "$1•••$2") : v), 2)}</pre>
+        </Modal>
       )}
+      {trail && <TrailDrawer repo={trail} onClose={() => setTrail(null)} />}
     </div>
   );
 }

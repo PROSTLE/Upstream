@@ -1,11 +1,15 @@
-import { useSearchParams } from "react-router-dom";
-import { CalendarClock, CheckCircle2, RefreshCw, Repeat, ShieldCheck, Wallet, XCircle } from "lucide-react";
+import { useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Bot, CalendarClock, CheckCircle2, CircleDollarSign, Info, RefreshCw, Repeat, ShieldCheck, Wallet, XCircle } from "lucide-react";
 import { api, useApi } from "../api.ts";
-import { dateTime, money, moneyStr } from "../format.ts";
-import { ActionButton, BrandIcon, Card, CheckRow, ErrorBox, Loading, PageHead, Status, useToast } from "../ui.tsx";
+import { dateTime, money, moneyStr, plural } from "../format.ts";
+import { useOverview } from "../overview.tsx";
+import { useBrand } from "../brand.tsx";
+import { ActionButton, BrandIcon, Card, Empty, ErrorBox, Loading, PageHead, Status, Stepper, useToast } from "../ui.tsx";
 
 export function Funding() {
   const { data, error, loading, reload } = useApi<any>("/api/funding");
+  const brand = useBrand();
   const [params] = useSearchParams();
   const toast = useToast();
   if (loading && !data) return <div className="page"><Loading /></div>;
@@ -13,24 +17,45 @@ export function Funding() {
   const sub = data.subscription;
   const p = data.pool;
   const cur = p.currency;
+  // A pool funded by one-time top-ups alone is funding too, with or without a subscription.
+  const stage = p.fundingGross > 0 ? 3 : !data.plan_id ? 0 : sub?.status !== "ACTIVE" ? 1 : 2;
+
+  const rows: [string, number, string?][] = [
+    ["Funded (gross)", p.fundingGross, "Subscription payments and top-ups PayPal captured"],
+    ["PayPal funding fees", p.fundingFees, "as PayPal reports them on each payment"],
+    ["Payouts sent", p.payoutsSent],
+    ["Payout fees", p.payoutFees, "payout_item_fee per item"],
+    ["Returned / cancelled", p.returned, "Unclaimed items cancelled or returned"],
+  ];
 
   return (
     <div className="page">
       <PageHead
+        eyebrow="Step 1 · Money in"
         title="Funding"
-        subtitle={`A fixed "agent tithe" you approve once with PayPal. Upstream never charges more than the plan and only distributes money PayPal has confirmed.`}
+        subtitle={`A fixed "agent tithe" you approve once with PayPal Subscriptions, or a one-time top-up with PayPal Orders. ${brand} never charges more than you approved, and only distributes money PayPal has confirmed.`}
       />
       {params.get("subscribed") && (
         <div className="callout green"><CheckCircle2 size={18} color="var(--green)" /><div>PayPal returned subscription <code>{params.get("subscribed")}</code> with status <strong>{params.get("status")}</strong>. Payments appear in the pool once PayPal reports them.</div></div>
       )}
       {params.get("cancelled") && <div className="callout amber"><XCircle size={18} color="var(--amber)" /><div>You left PayPal without approving. Nothing was charged.</div></div>}
       {params.get("error") && <ErrorBox error={params.get("error")!} />}
+      {params.get("topup") && (
+        params.get("capture") === "COMPLETED"
+          ? <div className="callout green"><CheckCircle2 size={18} color="var(--green)" /><div>PayPal captured your top-up. It's in the pool now, with PayPal's fee booked separately in the ledger.</div></div>
+          : <div className="callout amber"><CalendarClock size={18} color="var(--amber)" /><div>PayPal reports the top-up as <strong>{params.get("capture")}</strong>. Nothing is booked until the capture completes; {brand} checks again hourly, or press Sync on the top-up below.</div></div>
+      )}
+      {params.get("topup_cancelled") && <div className="callout amber"><XCircle size={18} color="var(--amber)" /><div>You left PayPal without approving the top-up. Nothing was charged.</div></div>}
+
+      <div className="card card-pad">
+        <Stepper steps={["Plan created in PayPal", "Approved by you in PayPal", "First payment confirmed", "Funding the pool"]} current={stage} />
+      </div>
 
       <div className="split">
         <Card title="Agent tithe" sub="PayPal Subscriptions API" icon={<Repeat size={17} />}>
           <div className="row" style={{ alignItems: "baseline", gap: 6 }}>
             <span className="stat-value">{moneyStr(data.tithe.amount, cur)}</span>
-            <span className="muted">{cur} / {data.tithe.interval.toLowerCase()}</span>
+            <span className="muted">per {data.tithe.interval.toLowerCase()}</span>
           </div>
           <div className="divider" style={{ margin: "16px 0" }} />
           <dl className="kv">
@@ -47,21 +72,22 @@ export function Funding() {
           </dl>
           <div className="row" style={{ marginTop: 18 }}>
             <ActionButton
-              className="btn primary"
+              className="btn paypal lg"
               disabled={!data.plan_id || sub?.status === "ACTIVE"}
+              title={!data.plan_id ? "Create the plan first: npm run setup:paypal" : undefined}
               onRun={async () => {
                 const r = await api<{ approveUrl: string }>("/api/funding/subscribe", { body: {}, admin: true });
                 window.location.href = r.approveUrl;
               }}
             >
-              <BrandIcon name="paypal" size={15} mono />
-              {sub?.status === "ACTIVE" ? "Subscription active" : "Approve with PayPal"}
+              <BrandIcon name="paypal" size={16} mono />
+              {sub?.status === "ACTIVE" ? "Subscription active" : `Approve ${moneyStr(data.tithe.amount, cur)}/${data.tithe.interval.toLowerCase()} with PayPal`}
             </ActionButton>
             <ActionButton
               disabled={!sub}
               onRun={async () => {
                 const r = await api<{ status: string; booked: number }>("/api/funding/sync", { body: {}, admin: true });
-                toast(`PayPal says ${r.status}; ${r.booked} new payment(s) booked.`);
+                toast(`PayPal says ${r.status}; ${plural(r.booked, "new payment")} booked.`);
                 await reload();
               }}
             >
@@ -69,40 +95,164 @@ export function Funding() {
               Sync from PayPal
             </ActionButton>
           </div>
+          <p className="muted small" style={{ marginTop: 10 }}>You'll approve on PayPal's own page and come straight back here. Cancel any time from your PayPal account.</p>
         </Card>
 
-        <Card title="How funds are handled" icon={<ShieldCheck size={17} />} tone="teal">
-          <CheckRow ok label="Money in is read from PayPal, not assumed" detail="Subscription transactions (gross, fee) are pulled from /v1/billing/subscriptions/{id}/transactions; webhooks only trigger that sync, so nothing is booked twice." />
-          <CheckRow ok label="PayPal's fees are shown, not hidden" detail="Funding fees and per-item payout fees are booked from the amounts PayPal reports." />
-          <CheckRow ok label="Unclaimed money doesn't leak" detail="Allocations for repos without a verified maintainer are held, then released back to the pool." />
-          <CheckRow ok label="Cancel any time in PayPal" detail="The subscription is yours; cancelling it in PayPal stops new funding immediately." />
+        <Card
+          title="How funds are handled"
+          sub="How the code is built. Whether it holds for this server's records is checked on the Live audit page."
+          icon={<ShieldCheck size={17} />}
+          tone="teal"
+          actions={<Link className="btn ghost sm" to="/audit">Live audit</Link>}
+        >
+          <DesignNote label="Money in is read from PayPal, not assumed" detail="Subscription transactions (gross, fee) are pulled from /v1/billing/subscriptions/{id}/transactions and top-ups from the captured order; webhooks only trigger that read, so nothing is booked twice." />
+          <DesignNote label="PayPal's fees are shown, not hidden" detail="Funding fees and per-item payout fees are booked from the amounts PayPal reports." />
+          <DesignNote label="Full refunds leave the pool" detail="Refund webhooks and an hourly job re-read PayPal, so refunded money stops counting as available. Partial subscription refunds are not broken out by PayPal's transaction list and are not booked automatically." />
+          <DesignNote label="Unclaimed money doesn't leak" detail="Allocations for repos without a verified maintainer are held, then released back to the pool." />
         </Card>
       </div>
 
-      <Card title="Pool reconciliation" sub="Funded + fees + payouts + returns = balance; balance − held − in flight = available" icon={<Wallet size={17} />} tone="violet">
-        <div className="grid-4" style={{ gap: 12 }}>
-          {[
-            ["Funded (gross)", p.fundingGross],
-            ["PayPal funding fees", p.fundingFees],
-            ["Payouts sent", p.payoutsSent],
-            ["Payout fees", p.payoutFees],
-            ["Returned / cancelled", p.returned],
-            ["Balance", p.balance],
-            ["Held for unclaimed", -p.reserved],
-            ["In flight", -p.inFlight],
-          ].map(([label, v]) => (
-            <div key={label as string} className="card" style={{ padding: 14, boxShadow: "none", background: "var(--surface-2)" }}>
-              <div className="muted small">{label}</div>
-              <div className="num" style={{ fontSize: 18, fontWeight: 620, color: (v as number) < 0 ? "var(--red)" : "var(--text)" }}>{money(v as number, cur)}</div>
+      <TopupCard data={data} onDone={reload} />
+
+      <Card title="Pool reconciliation" sub="Every line is a PayPal-confirmed ledger total" icon={<Wallet size={17} />} tone="violet">
+        <div className="summary">
+          {rows.map(([label, v, hint]) => (
+            <div key={label} className="line-row">
+              <span>{label}{hint && <span className="muted small"> · {hint}</span>}</span>
+              <span className="num" style={{ fontWeight: 600, color: v < 0 ? "var(--red)" : undefined }}>{money(v, cur)}</span>
             </div>
           ))}
+          <div className="line-row" style={{ borderTopStyle: "double", borderTopWidth: 3 }}>
+            <strong>Balance</strong><strong className="num">{money(p.balance, cur)}</strong>
+          </div>
+          <div className="line-row"><span>Held for unclaimed repos</span><span className="num" style={{ color: "var(--amber)" }}>{money(-p.reserved, cur)}</span></div>
+          <div className="line-row"><span>In flight (open batches + fee reserve)</span><span className="num">{money(-p.inFlight, cur)}</span></div>
         </div>
         <div className="row" style={{ marginTop: 14 }}>
           <CalendarClock size={16} color="var(--muted)" />
           <span className="muted">Available to allocate now:</span>
-          <strong className="num">{money(p.available, cur)}</strong>
+          <strong className="num" style={{ fontSize: 16 }}>{money(p.available, cur)}</strong>
         </div>
       </Card>
     </div>
+  );
+}
+
+/** A statement about how the code works, shown without a pass/fail tick because it isn't a check of live data. */
+function DesignNote({ label, detail }: { label: string; detail: string }) {
+  return (
+    <div className="check">
+      <Info size={18} color="var(--muted)" aria-hidden />
+      <div>
+        <div style={{ fontWeight: 560 }}>{label}</div>
+        <div className="muted small">{detail}</div>
+      </div>
+    </div>
+  );
+}
+
+/** Decimal places the currency allows (ISO 4217 via Intl), the same rule the server applies. */
+const amountPattern = (currency: string) => {
+  const d = new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions().maximumFractionDigits ?? 2;
+  return { re: d > 0 ? new RegExp(`^\\d+(\\.\\d{1,${d}})?$`) : /^\d+$/, example: d > 0 ? `25 or 25.${"0".repeat(d)}` : "25" };
+};
+
+function TopupCard({ data, onDone }: { data: any; onDone: () => Promise<void> }) {
+  const toast = useToast();
+  const brand = useBrand();
+  const cur = data.pool.currency;
+  const [amount, setAmount] = useState("");
+  const [touched, setTouched] = useState(false);
+  const max = data.topup_policy?.max as string | null;
+  const agent = data.topup_policy?.agent as { cap: string; left: string } | null;
+  const pattern = amountPattern(cur);
+  const tooBig = max != null && Number(amount) > Number(max);
+  const invalid = amount.length > 0 && (!pattern.re.test(amount) || Number(amount) <= 0 || tooBig);
+  const topups = (data.topups ?? []) as any[];
+  const paypalOn = Boolean(useOverview().data?.features?.paypal);
+  return (
+    <Card title="Add funds once" sub={`PayPal Orders v2: you approve one payment, ${brand} captures it and books PayPal's own numbers`} icon={<CircleDollarSign size={17} />} tone="teal">
+      <div className="split" style={{ alignItems: "start" }}>
+        <form
+          className="stack"
+          onSubmit={(e) => e.preventDefault()}
+          aria-label="One-time top-up"
+        >
+          <div className="field">
+            <label htmlFor="topup-amount">Amount ({cur})</label>
+            <input
+              id="topup-amount"
+              className="input num"
+              inputMode="decimal"
+              placeholder={cur}
+              value={amount}
+              aria-invalid={touched && invalid}
+              aria-describedby="topup-hint"
+              onBlur={() => setTouched(true)}
+              onChange={(e) => setAmount(e.target.value.trim())}
+              style={{ maxWidth: 220 }}
+            />
+            {touched && invalid
+              ? <span className="err" id="topup-hint">{tooBig ? `The largest one-time top-up is ${moneyStr(max, cur)} (POLICY_MAX_TOPUP).` : `Enter an amount like ${pattern.example}.`}</span>
+              : <span className="hint" id="topup-hint">{max ? `Up to ${moneyStr(max, cur)} per top-up. ` : ""}You'll approve it on PayPal's page and come straight back here.</span>}
+          </div>
+          <div className="row">
+            <ActionButton
+              className="btn paypal"
+              disabled={!amount || invalid || !paypalOn}
+              title={!paypalOn ? "Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET first" : undefined}
+              confirm={amount && !invalid ? {
+                title: `Add ${moneyStr(amount, cur)} to the pool?`,
+                body: <p>You'll go to PayPal to approve a one-time payment of <strong>{moneyStr(amount, cur)}</strong>. Nothing is charged unless you approve it there. PayPal's fee is booked from the capture, not estimated.</p>,
+                confirmLabel: <><BrandIcon name="paypal" size={15} mono />Continue to PayPal</>,
+                tone: "paypal",
+              } : undefined}
+              onRun={async () => {
+                const r = await api<{ approveUrl: string }>("/api/funding/topup", { body: { amount }, admin: true });
+                window.location.href = r.approveUrl;
+              }}
+            >
+              <BrandIcon name="paypal" size={15} mono />Add {amount && !invalid ? moneyStr(amount, cur) : "funds"} with PayPal
+            </ActionButton>
+          </div>
+          <div className="callout" style={{ marginTop: 4 }}>
+            <Bot size={16} color="var(--violet)" />
+            <div className="small">
+              {agent
+                ? <>Your coding agent can ask for a top-up through the MCP tool, up to <strong>{moneyStr(agent.cap, cur)}</strong> per 24 hours ({moneyStr(agent.left, cur)} left). It only gets a PayPal link; you still approve every payment.</>
+                : <>Agent top-up requests are off. Set <code>POLICY_MAX_AGENT_TOPUP</code> to let your agent ask for one (it only ever gets a PayPal link you approve).</>}
+            </div>
+          </div>
+        </form>
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 8 }}>Recent top-ups</div>
+          {topups.length === 0 ? (
+            <Empty icon={<CircleDollarSign size={20} />} title="No top-ups yet">One-time payments you or your agent start appear here with PayPal's status.</Empty>
+          ) : (
+            <div className="summary">
+              {topups.slice(0, 6).map((t) => (
+                <div key={t.id} className="line-row" style={{ alignItems: "center" }}>
+                  <span className="row" style={{ gap: 8, minWidth: 0 }}>
+                    <Status value={t.capture_status ?? t.status} />
+                    {t.source === "agent" && <span className="pill violet"><Bot size={11} />Agent</span>}
+                    <span className="muted small">{dateTime(t.created_at)}</span>
+                    {t.error && <span className="small" style={{ color: "var(--amber)" }} title={t.error}>needs attention</span>}
+                  </span>
+                  <span className="row" style={{ gap: 8, flexWrap: "nowrap", flex: "none" }}>
+                    <strong className="num">{moneyStr(t.amount, t.currency)}</strong>
+                    {t.approve_url && <a className="btn sm" href={t.approve_url}>Approve</a>}
+                    {t.order_id && (
+                      <ActionButton className="btn ghost sm icon" title="Sync from PayPal" onRun={async () => { const r = await api<any>(`/api/funding/topup/${t.id}/sync`, { body: {}, admin: true }); toast(`PayPal says ${r.capture_status ?? r.status}.`); await onDone(); }}>
+                        <RefreshCw size={13} />
+                      </ActionButton>
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }
