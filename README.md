@@ -2,7 +2,7 @@
 
 **Your AI coding agent pays the open-source maintainers it actually relied on, through PayPal.**
 
-Upstream records what a coding agent *really did* in a session (packages installed, code written against a library's API, library source studied, docs read). Claude weighs that evidence; deterministic code then checks every weight. The result is paid to maintainers who have proven they control the repository, using **PayPal Payouts**. Funding comes from a fixed monthly "agent tithe" the developer approves once with **PayPal Subscriptions**.
+Upstream records what a coding agent *really did* in a session (packages installed, code written against a library's API, library source studied, docs read). Muse Spark weighs that evidence; deterministic code then checks every weight. The result is paid to maintainers who have proven they control the repository, using **PayPal Payouts**. Funding comes from a fixed monthly "agent tithe" the developer approves once with **PayPal Subscriptions**.
 
 > Built for *Build What's Next with PayPal and AI* (Devpost, 2026). PayPal sandbox only. MIT licensed.
 
@@ -24,7 +24,7 @@ Claude Code ──hooks──► evidence (installs, imports + lines using them,
                          ▼
               candidates per session: used · docs-only · merely present
                          ▼
-     Claude (structured output) proposes weights + cites evidence ids
+     Muse Spark (structured output) proposes weights + cites evidence ids
                          ▼
      validator (code): drop hallucinated / uncited / merely-present, normalise, per-package cap
                          ▼
@@ -44,13 +44,14 @@ Three surfaces:
 | **Agent hook + MCP server** | the developer's coding agent | Hooks capture evidence automatically. The optional MCP server gives the agent a guarded Payouts tool. |
 | **Funder dashboard** | the developer or team | Fund with PayPal, review sessions and attribution, approve and send payouts, reconcile the ledger, run the eval. |
 | **Maintainer claim page** | open-source maintainers | Prove you control a repo, then register a PayPal email. Public, no Upstream account needed. |
+| **Public repo page + README badge** | maintainers and their users | `/r/owner/name` shows what agents relied on and what is held, paid or in flight; `/api/badge/owner/name.svg` puts "$X waiting · claim it" in a README. |
 
 ## How it meets the hackathon requirements
 
 | Requirement | Upstream |
 |---|---|
-| Meaningfully integrate PayPal | Subscriptions (catalog product, plan, subscription, transactions), Payouts (create batch, show batch, show item, cancel unclaimed item), Webhooks (create/patch subscription, `verify-webhook-signature`), OAuth2 client credentials. Money only moves through PayPal. |
-| Meaningfully incorporate AI | Claude turns raw session evidence into cited value weights, which is the core judgement of the product. Its output is measured against a deterministic baseline on sessions *you* label (Eval page). |
+| Meaningfully integrate PayPal | Subscriptions (catalog product, plan, subscription, transactions), Orders v2 one-time top-ups (create, capture, read; fees and refunds from PayPal's own numbers), Log in with PayPal for maintainers' verified payout email, Payouts (create batch, show batch, show item, cancel unclaimed item), Webhooks (create/patch subscription, `verify-webhook-signature`), OAuth2 client credentials. Money only moves through PayPal. |
+| Meaningfully incorporate AI | Muse Spark turns raw session evidence into cited value weights, which is the core judgement of the product. Its output is measured against a deterministic baseline on sessions *you* label (Eval page). |
 | Working prototype | Runs locally with one command, or on Render (`render.yaml`). No mock data or mock fallbacks: a missing credential disables that feature and the UI says which. |
 | Documented | This README, `.env.example`, and inline docs in the code. |
 | Tools identified | See [Tools used](#tools-used). |
@@ -65,6 +66,8 @@ Three surfaces:
 | Catalog Products | `POST /v1/catalogs/products` | `server/src/paypal/subscriptions.ts` |
 | Subscriptions | `POST /v1/billing/plans`, `POST /v1/billing/subscriptions` (approve link), `GET /v1/billing/subscriptions/{id}`, `GET …/{id}/transactions` | `subscriptions.ts`, `funding.ts` |
 | Payouts | `POST /v1/payments/payouts`, `GET /v1/payments/payouts/{id}` (all pages), `GET /v1/payments/payouts-item/{id}`, `POST /v1/payments/payouts-item/{id}/cancel` | `payouts.ts`, `settlement.ts` |
+| Orders v2 | `POST /v2/checkout/orders` (intent CAPTURE, `payment_source.paypal.experience_context`), `POST /v2/checkout/orders/{id}/capture` and `GET /v2/checkout/orders/{id}` with `Prefer: return=representation` | `paypal/orders.ts`, `topups.ts` |
+| Identity (Log in with PayPal) | `/connect` authorize page, `POST /v1/oauth2/token` (`grant_type=authorization_code`), `GET /v1/identity/openidconnect/userinfo` (falls back to `/v1/identity/oauth2/userinfo`, the path the integration guide shows) | `paypal/identity.ts`, `claims.ts` |
 | Webhooks | `GET/POST/PATCH /v1/notifications/webhooks`, `POST /v1/notifications/verify-webhook-signature` (raw body spliced in byte-for-byte) | `webhooks.ts`, `events.ts` |
 
 Details that matter:
@@ -72,12 +75,14 @@ Details that matter:
 - **Idempotency.** Every batch has `sender_batch_id = upstream-<settlement id>`. PayPal rejects reuse within 30 days and completes a payment only once per `sender_batch_id`, so a retry after a 5xx is safe. The request body is frozen at approval, and the same id is sent as `PayPal-Request-Id`. **Replay batch** re-sends the identical body with a *new* request id and shows PayPal's real rejection.
 - **Unclaimed money.** PayPal returns unclaimed payouts after 30 days unless cancelled. Upstream cancels `UNCLAIMED` items after `POLICY_CANCEL_UNCLAIMED_AFTER_DAYS` (or on demand), books the return, re-holds the money for that repo, and flags the claim so the maintainer can fix their email.
 - **Fees are real numbers.** Funding fees come from the subscription transaction's `fee_amount`, and payout fees from each item's `payout_item_fee`. A configurable fee *reserve* keeps the budget safe until PayPal reports the actual fee; that reserve shrinks as fees arrive.
-- **Webhooks never move money directly.** Events are signature-verified, stored, and processed idempotently. Funding events only trigger a pull of PayPal's transaction list (one source of truth). Batch events, which carry no item data, trigger a batch read. Refunds and reversals (`PAYMENT.SALE.REFUNDED` / `REVERSED`) trigger the same pull. An hourly reconciler re-reads open batches *and* subscription transactions, so nothing depends on a webhook arriving.
-- **Agent tool.** PayPal's Agent Toolkit lists catalog, disputes, invoices, orders/payments, reporting, shipment tracking and subscriptions, but no Payouts. `mcp/` adds `upstream_plan_payout`, `upstream_send_approved_payout` and `upstream_payout_status`. The model can never choose receivers or amounts, and can only send a batch a human approved.
+- **Webhooks never move money directly.** Events are signature-verified, stored, and processed idempotently. Funding events only trigger a pull of PayPal's transaction list (one source of truth). Batch events, which carry no item data, trigger a batch read. Refunds and reversals (`PAYMENT.SALE.REFUNDED` / `REVERSED`) trigger the same pull. `CHECKOUT.ORDER.APPROVED` captures a top-up whose payer closed the tab, and `PAYMENT.CAPTURE.*` events trigger a read of the order. An hourly reconciler re-reads open batches, subscription transactions and recent top-ups, so nothing depends on a webhook arriving.
+- **One-time top-ups.** Gross and `paypal_fee` come from the capture's `seller_receivable_breakdown`; a refund books its gross out and the fee PayPal hands back in (`seller_payable_breakdown`). The capture uses a fixed `PayPal-Request-Id`, so returning twice or a late webhook never captures twice. `POLICY_MAX_TOPUP` caps dashboard top-ups. A chargeback (`PAYMENT.CAPTURE.REVERSED`) is flagged for review, not booked, because PayPal's docs don't show how it appears on the order.
+- **Verified payout email.** With `PAYPAL_LOGIN_ENABLED=true`, maintainers can connect their PayPal account instead of typing an email: Upstream reads `email` and `email_verified` from Identity v1, refuses an unverified email, and doesn't store the user's PayPal token. The userinfo response has no payer id, so payouts still use `recipient_type` EMAIL, now with an email PayPal verified.
+- **Agent tool.** PayPal's Agent Toolkit lists catalog, disputes, invoices, orders/payments, reporting, shipment tracking and subscriptions, but no Payouts. `mcp/` adds `upstream_plan_payout`, `upstream_send_approved_payout`, `upstream_payout_status`, `upstream_session_credits` (PR credits Markdown) and `upstream_request_funding`. The model can never choose receivers or amounts, can only send a batch a human approved, and a funding request only returns a PayPal link the user approves, capped per 24 hours by `POLICY_MAX_AGENT_TOPUP` (off when unset).
 
-## AI: what Claude does and how we keep it honest
+## AI: what Muse Spark does and how we keep it honest
 
-- **Attribution** (`server/src/attribution/llm.ts`): `client.beta.messages.parse` with a Zod schema (`betaZodOutputFormat`), model from `UPSTREAM_MODEL` (default `claude-opus-5-5`), adaptive thinking, and `fallbacks: "default"`. Claude classifies each candidate as meaningful, supporting, incidental or not used, assigns a relative weight, writes a one-to-two-sentence rationale a maintainer can read, and **must cite evidence ids**. The system prompt treats all session content as data, so a README asking for credit is ignored.
+- **Attribution** (`server/src/attribution/llm.ts`): Meta's Model API through its Anthropic-format Messages endpoint (`POST https://api.meta.ai/v1/messages`), called with the Anthropic SDK and a JSON schema built from Zod (`zodOutputFormat`). The model comes from `UPSTREAM_MODEL` (default `muse-spark-1.3`, a Standard model, whose content Meta says it does not use for training). Muse Spark classifies each candidate as meaningful, supporting, incidental or not used, assigns a relative weight, writes a one-to-two-sentence rationale a maintainer can read, and **must cite evidence ids**. The system prompt treats all session content as data, so a README asking for credit is ignored.
 - **Validator** (`validate.ts`), applied in code after the model:
   - drops packages that aren't candidates;
   - drops citations that don't exist;
@@ -85,7 +90,7 @@ Details that matter:
   - normalises the weights and enforces `POLICY_MAX_PACKAGE_SHARE`;
   - flags weak-evidence/high-weight, strong-but-unpaid, and large divergence from the baseline.
 - **Baseline** (`baseline.ts`): *imports written × lines using them*, the simple heuristic the AI has to beat.
-- **Eval** (`eval.ts`, Eval page): label packages in real sessions as meaningful, incidental or not used. Upstream then reports precision, recall, F1, accuracy and weight error (L1) for Claude and the baseline **on the same sessions**. Labels saved before any attribution ran are marked **blind** by the server (from stored timestamps), and the page can score blind sessions on their own, so the labeller can't have been nudged by either method's weights. Nothing is precomputed; with no labels, the page says so.
+- **Eval** (`eval.ts`, Eval page): label packages in real sessions as meaningful, incidental or not used. Upstream then reports precision, recall, F1, accuracy and weight error (L1) for Muse Spark and the baseline **on the same sessions**. Labels saved before any attribution ran are marked **blind** by the server (from stored timestamps), and the page can score blind sessions on their own, so the labeller can't have been nudged by either method's weights. Nothing is precomputed; with no labels, the page says so.
 
 Why the baseline isn't enough, from this repo's smoke test (Claude Code-shaped events piped through the real hook and server, not yet a live Claude Code session): the agent added code against an existing `dayjs` import, and studied `lodash/debounce.js` before writing its own debounce. Import counting gives both **0%**. Catching that kind of use (API use without a new import, reimplementation after reading source) is what the LLM step is for, and the eval measures whether it actually does.
 
@@ -108,6 +113,18 @@ The collector is a Claude Code **hook** (`hook/upstream-hook.mjs`), not a tool t
 Python import names are mapped to distributions (`yaml` → PyYAML, `PIL` → pillow) with `importlib.metadata.packages_distributions()` on the developer's machine, using the project's `.venv` when there is one. That call reads every installed distribution and can take several seconds, so the hook caches the map per interpreter and only recomputes it when a `sys.path` directory changes. The installer computes it once up front, so the first session already gets a cache hit. `SessionStart` sends it, and `Stop` resends it if packages were installed mid-session. The current directory is removed from `sys.path` first, so a project file such as `json.py` never runs inside the hook. Node built-ins come from `module.builtinModules`. Manifests are snapshotted at `SessionStart` and `Stop`, so "added this session" is a diff, not a guess.
 
 **Privacy:** files that look like secrets (`.env*`, keys, credentials, `.npmrc`/`.pypirc`) are redacted before anything leaves the machine. Reads of your own files send only the path. Events go only to the server you configure, and are spooled locally when it's offline.
+
+## Explainability and the maintainer loop
+
+- **Money trail.** For any repo, the dashboard opens every allocation, the sessions behind it, each session's validated weight with Muse Spark's rationale, the evidence ids it cites, and the PayPal payout items (`GET /api/trail?repo=github.com/owner/name`). Nothing is recomputed for display.
+- **Session receipt.** Each attributed session gets a plain-language receipt and a *Copy credits for your PR* button: a Markdown table of packages, roles, shares and reasons, in the spirit of ATTRIBUTION.md.
+- **Public repo page and badge.** `/r/owner/name` and `/api/badge/owner/name.svg` (`public.ts`) show held, in-flight and paid totals, how many agent sessions relied on the repo, **how the maintainer proved control** (GitHub permission level, or the FUNDING.yml file and claim link anyone can re-check), and each payout PayPal reported with its **PayPal transaction id**, so the maintainer can find it in their own PayPal activity. Projects and payout emails are never public. Unclaimed repos get an *Invite* link on the Packages page, and the claim page lists repos with money waiting.
+
+## Trust: what you don't have to take on faith
+
+- **Private by default.** `DASHBOARD_ACCESS=private` (the default) means sessions, evidence, payouts, claims and the ledger need `ADMIN_TOKEN` even to read; the UI shows an unlock screen. `public` opens reads for a demo. Raw hook payloads (they contain your own code: Edit diffs, the first 8 KB of edited files) need `ADMIN_TOKEN` in both modes. The agent's MCP tools read session evidence back with the `INGEST_TOKEN` the hook already uses, and nothing else. Maintainer pages are always public. Covered by `server/test/access.test.ts`, which starts the real server and checks each route over HTTP.
+- **Live audit** (`server/src/audit.ts`, `GET /api/audit`, *Live audit* page). Ten checks re-read the stored records on every request: every ledger entry points at a PayPal object; held plus in-flight money is covered by the PayPal-confirmed balance; every payout went to a maintainer verified before approval, with stored proof; each payout item equals its allocations to the cent; the ledger agrees with each item's PayPal status (sent, fee and return booked exactly once); items respect the caps recorded with their run; only signature-verified webhooks changed anything; every paid share cites evidence that exists in the evidence table; every allocation traces to sessions whose attribution pays that package; unfinished batches were re-read from PayPal in the last 2 hours. A check with nothing to examine reports *nothing to check yet*, never a pass, and the page says so plainly when the server hasn't called PayPal or Muse Spark yet. `server/test/audit.test.ts` runs a real payout through the settlement code, expects every check to pass, then alters one record at a time and expects the matching check to fail.
+- **Locked history.** Once a session is in a payout, its attribution can't be re-run or swapped, so the money trail can't be rewritten after the fact. A claim's `verified_at` records when ownership was first proven; a replaced or revoked claim can't come back.
 
 ## Maintainer claims (ownership proof)
 
@@ -137,7 +154,7 @@ npm start                   # http://localhost:8787
 | Variable | Where to get it |
 |---|---|
 | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` | developer.paypal.com → Apps & Credentials → **Sandbox** app |
-| `ANTHROPIC_API_KEY` | console.anthropic.com |
+| `MODEL_API_KEY` | dev.meta.ai → API keys |
 | `ADMIN_TOKEN`, `INGEST_TOKEN` | any long random strings, e.g. `node -e "console.log(crypto.randomUUID())"` |
 | `GITHUB_TOKEN` | optional but recommended: anonymous GitHub API access is 60 requests/hour, which FUNDING.yml lookups exhaust quickly. A fine-grained token with public read access is enough |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | GitHub → Settings → Developer settings → OAuth Apps; callback `PUBLIC_BASE_URL/api/claims/github/callback` |
@@ -145,7 +162,13 @@ npm start                   # http://localhost:8787
 
 For development, `npm run dev` runs the API with `--watch` and Vite on http://localhost:5173.
 
-Connect Claude Code in the project you're working on:
+Connect Claude Code. The simplest way is the bundled **Claude Code plugin** (hooks, MCP server and the `/upstream-oss:receipt`, `/upstream-oss:credits` and `/upstream-oss:fund` skills). Claude Code asks for the server URL and tokens and keeps the tokens in its secure storage:
+
+```bash
+claude --plugin-dir /path/to/upstream   # after npm install in the clone
+```
+
+Or install just the hooks into one project:
 
 ```bash
 node hook/install.mjs --url <PUBLIC_BASE_URL> --token <INGEST_TOKEN> --project /path/to/your/project --with-mcp
@@ -154,12 +177,14 @@ node hook/install.mjs --url <PUBLIC_BASE_URL> --token <INGEST_TOKEN> --project /
 ### Testing instructions for judges
 
 1. **Sandbox accounts.** In the PayPal Developer Dashboard you have a sandbox *business* account (sends payouts) and can create a *personal* account (receives them, and also pays the subscription). Use the personal account's email when claiming.
-2. **Fund.** Funding page → *Approve with PayPal* → log in with the sandbox personal account. Back on the page, *Sync from PayPal* books the first payment once PayPal reports it (the ledger shows gross and fee).
+2. **Fund.** Funding page → *Approve with PayPal* → log in with the sandbox personal account. Back on the page, *Sync from PayPal* books the first payment once PayPal reports it (the ledger shows gross and fee). Or use *Add funds once*: approve a one-time payment and Upstream captures it on return.
 3. **Code.** Install the hook in any npm or Python project and run a short Claude Code session (for example "add input validation with zod"). The session appears under **Agent sessions** in real time.
-4. **Attribute.** On the session page, first label packages under *Your ground truth* (labels saved before attribution count as blind), then *Attribute with Claude*. Compare the Claude and Baseline tabs and read the validator flags.
-5. **Claim.** Open `/claim` and claim a GitHub repo **you** administer (for example one of your own packages the agent used), entering the sandbox personal email.
+4. **Attribute.** On the session page, first label packages under *Your ground truth* (labels saved before attribution count as blind), then *Attribute with Muse Spark*. Compare the Muse Spark and Baseline tabs and read the validator flags.
+5. **Claim.** Open `/claim` and claim a GitHub repo **you** administer (for example one of your own packages the agent used), entering the sandbox personal email (or *Connect my PayPal account* when Log in with PayPal is enabled).
 6. **Pay.** Payouts → *Plan payout* → review the policy checks → *Approve* → *Send with PayPal Payouts* → *Sync from PayPal*. Try *Replay batch* to see PayPal reject the duplicate `sender_batch_id`, and *Cancel* on an `UNCLAIMED` item (send to an email that has no sandbox account to produce one).
-7. **Reconcile.** The Ledger shows every PayPal-confirmed movement and the API audit log (request ids, debug ids).
+7. **Reconcile.** The Ledger shows every PayPal-confirmed movement and the API audit log (request ids, debug ids). *Live audit* re-checks the records against the payout rules.
+
+The dashboard is private: unlock it with the `ADMIN_TOKEN` from the testing notes. The claim page and repo pages need no token.
 
 ## Deploy on Render
 
@@ -168,9 +193,12 @@ node hook/install.mjs --url <PUBLIC_BASE_URL> --token <INGEST_TOKEN> --project /
 ## Tests
 
 ```bash
-npm test          # parsers, evidence extraction, validator, money math, the hook script itself, and an end-to-end settlement
-npm run doctor    # live, read-only checks against PayPal, Claude, GitHub, deps.dev and ecosyste.ms (needs .env)
+npm test          # 42 tests: parsers, evidence extraction, validator, money math, the hook script and its spool, public repo views and badge,
+                  # top-ups (capture, fees, refunds, retries, agent cap), Log in with PayPal, PR credits, the plugin manifest, an end-to-end settlement,
+                  # claim and settlement state guards, the live audit (passes on real records, fails on altered ones), and HTTP access rules
+npm run doctor    # live, read-only checks against PayPal, Muse Spark, GitHub, deps.dev and ecosyste.ms (needs .env)
 npm run typecheck
+npm run icons     # re-render the favicon and app icons from the one vector mark (scripts/icons.mjs)
 ```
 
 The settlement test drives plan → approve → execute twice (exactly one PayPal POST) → replay (rejected) → UNCLAIMED → cancel → returned and re-held, against an in-process stand-in for PayPal's HTTP API. That stand-in exists only in the test file; the product always talks to PayPal.
@@ -179,14 +207,16 @@ The settlement test drives plan → approve → execute twice (exactly one PayPa
 
 | Tool | How it's used |
 |---|---|
-| **Claude** (`claude-opus-5-5` via the Anthropic TypeScript SDK) | Runtime: evidence-based value attribution with structured output, server-side refusal fallback. |
+| **Muse Spark** (`muse-spark-1.3` on Meta's Model API, through its Anthropic-format Messages endpoint with the Anthropic TypeScript SDK) | Runtime: evidence-based value attribution with structured output. |
 | **Claude Code hooks** | Runtime: the evidence collector (`PostToolUse`, `SessionStart`, `Stop`, `SessionEnd`). |
+| **Claude Code plugin** | Packaging: `.claude-plugin/plugin.json` bundles the hooks, the MCP server and three skills, with `userConfig` for the URL and tokens. |
 | **Model Context Protocol** (`@modelcontextprotocol/sdk`) | Runtime: Upstream's MCP server exposing guarded Payouts actions to agents. |
 | **PayPal REST APIs** (sandbox) | Subscriptions, Payouts, Webhooks, as listed above. |
 | **deps.dev API v3**, **ecosyste.ms Packages API**, **GitHub REST API** | Package → repo, funding links, FUNDING.yml, repo permissions. |
 | **AG Grid Community** + **AG Charts Community** | Sessions, packages, payout items, allocations, ledger and API-audit grids; attribution and eval charts. |
 | **Render** | Hosting via `render.yaml`. |
-| Lucide, Simple Icons, Inter, JetBrains Mono | UI icons and type. |
+| Lucide, Simple Icons, Inter, JetBrains Mono | UI icons and type. The PayPal mark is PayPal's own file from paypalobjects.com. |
+| **resvg** (`@resvg/resvg-js`) | Build time: renders the app icons from the hand-drawn SVG mark. |
 | Claude Code (as a coding assistant) | Used to help write this project. |
 
 ## Limitations (on purpose, in the open)

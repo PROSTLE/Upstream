@@ -1,19 +1,34 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
-  AlertTriangle, ArrowLeft, Braces, CheckCircle2, CircleSlash, FileWarning, Flag, FlaskConical, Info, Layers, ListTree, Scale, Sparkles, X,
+  AlertTriangle, ArrowLeft, Braces, CheckCircle2, CircleSlash, FileWarning, Flag, FlaskConical, Info, Layers, ListTree, ReceiptText, Scale, Sparkles,
 } from "lucide-react";
 import { api, useApi } from "../api.ts";
-import { dateTime, duration, pct } from "../format.ts";
-import { ActionButton, BrandIcon, Card, EVIDENCE, EcoIcon, Empty, ErrorBox, EvidenceIcon, Loading, PageHead, Status, useToast } from "../ui.tsx";
-import { Chart } from "../data.tsx";
+import { dateTime, duration, pct, plural } from "../format.ts";
+import { ActionButton, BrandIcon, Card, EVIDENCE, EcoIcon, Empty, ErrorBox, EvidenceIcon, Loading, Modal, PageHead, Status, useCopy, useToast } from "../ui.tsx";
+import { Chart, useNeutralFill, usePalette } from "../data.tsx";
+import { useOverview } from "../overview.tsx";
 
 export function SessionDetail() {
   const { id = "" } = useParams();
-  const { data, error, loading, reload } = useApi<any>(`/api/sessions/${encodeURIComponent(id)}`, [id]);
+  // Keyed by id: jumping from one session to another (palette, trail) starts from a clean state,
+  // so the label editor can never save one session's labels onto the next.
+  return <SessionView key={id} id={id} />;
+}
+
+function SessionView({ id }: { id: string }) {
+  const [live, setLive] = useState(false);
+  // While the agent is still working, new evidence streams in without a reload.
+  const { data, error, loading, reload } = useApi<any>(`/api/sessions/${encodeURIComponent(id)}`, [id], { poll: live ? 5000 : undefined });
   const toast = useToast();
+  const neutral = useNeutralFill();
+  const { data: ov } = useOverview();
+  const isOpen = data?.session?.status === "open";
+  useEffect(() => setLive(Boolean(isOpen)), [isOpen]);
   const [tabSel, setTab] = useState<"llm" | "baseline" | null>(null);
   const [raw, setRaw] = useState<any>(null);
+  const [evPkg, setEvPkg] = useState<string>("");
+  const [evKind, setEvKind] = useState<string>("");
 
   const runs = data?.runs ?? [];
   const llm = runs.find((r: any) => r.method === "llm");
@@ -31,14 +46,19 @@ export function SessionDetail() {
   const consulted = cands.filter((c) => c.status === "consulted");
   const present = cands.filter((c) => c.status === "present_only");
 
-  const compareKeys = [...new Set([...(llm?.validated.weights ?? []), ...(base?.validated.weights ?? [])].filter((w: any) => w.weight > 0).map((w: any) => w.name))];
-  const weightOf = (run: any, name: string) => run?.validated.weights.find((w: any) => w.name === name)?.weight ?? 0;
+  const compareKeys = [...new Set([...(llm?.validated.weights ?? []), ...(base?.validated.weights ?? [])].filter((w: any) => w.weight > 0).map((w: any) => `${w.ecosystem}:${w.name}`))];
+  const weightOf = (run: any, key: string) => run?.validated.weights.find((w: any) => `${w.ecosystem}:${w.name}` === key)?.weight ?? 0;
+  // Chart labels show the bare name unless two ecosystems share it.
+  const label = (key: string) => {
+    const name = key.slice(key.indexOf(":") + 1);
+    return compareKeys.filter((k) => k.slice(k.indexOf(":") + 1) === name).length > 1 ? key : name;
+  };
 
   return (
     <div className="page">
-      <Link to="/sessions" className="row muted small" style={{ gap: 6 }}><ArrowLeft size={14} />All sessions</Link>
+      <Link to="/sessions" className="back-link"><ArrowLeft size={14} />All sessions</Link>
       <PageHead
-        title={<span className="row" style={{ gap: 10 }}>{s.project ?? "Session"} <Status value={s.status} /></span>}
+        title={<span className="row" style={{ gap: 10 }}>{s.project ?? "Session"} <Status value={s.status} live={s.status === "open"} label={s.status === "open" ? "Live" : undefined} /></span>}
         subtitle={<>Started {dateTime(s.started_at)} · {duration(s.started_at, s.ended_at ?? s.last_event_at)} · {data.events.length} tool events · <code>{s.id}</code></>}
         actions={
           <>
@@ -48,18 +68,24 @@ export function SessionDetail() {
               </ActionButton>
             )}
             <ActionButton
-              className="btn primary"
+              className={`btn ${llm ? "" : "primary"}`}
               disabled={Boolean(s.allocated_settlement_id)}
-              title={s.allocated_settlement_id ? "Already part of a payout" : undefined}
+              title={s.allocated_settlement_id ? "Already part of a payout" : !ov?.features?.llm ? "MODEL_API_KEY is not set: only the baseline will run" : undefined}
+              confirm={runs.length === 0 && cands.length > 0 && data.labels.length === 0 ? {
+                title: "Attribute before labelling?",
+                body: <p>Labels you save <strong>after</strong> attribution don't count as blind in the eval, because you've seen both methods' weights. You can label in “Your ground truth” first, or attribute now.</p>,
+                confirmLabel: "Attribute now",
+                icon: <FlaskConical size={17} />,
+              } : undefined}
               onRun={async () => {
                 const r = await api<any>(`/api/sessions/${id}/attribute`, { body: {}, admin: true });
-                if (r.llmError) toast(`Baseline saved. Claude attribution failed: ${r.llmError}`, "error");
+                if (r.llmError) toast(`Baseline saved. Muse Spark attribution failed: ${r.llmError}`, "error");
                 else toast("Attribution complete and validated.");
                 await reload();
               }}
             >
-              <BrandIcon name="claude" size={15} mono />
-              {llm ? "Re-run attribution" : "Attribute with Claude"}
+              <BrandIcon name="meta" size={15} mono />
+              {llm ? "Re-run attribution" : "Attribute with Muse Spark"}
             </ActionButton>
           </>
         }
@@ -72,14 +98,16 @@ export function SessionDetail() {
         <MiniStat icon={<CircleSlash size={15} />} label="Merely present" value={present.length} foot="In the manifest, no session evidence: never paid" />
       </div>
 
+      {shown && <Receipt run={shown} cands={cands} project={s.project} sessionId={id} />}
+
       <Card
         title="Attribution"
-        sub={shown ? `${shown.method === "llm" ? `Claude (${shown.model})` : "Import-count baseline"} · validated ${dateTime(shown.created_at)}${shown.is_active ? " · used for payouts" : ""}` : "Not attributed yet"}
+        sub={shown ? `${shown.method === "llm" ? `Muse Spark (${shown.model})` : "Import-count baseline"} · validated ${dateTime(shown.created_at)}${shown.is_active ? " · used for payouts" : ""}` : "Not attributed yet"}
         icon={<Scale size={17} />}
         actions={
           <div className="row">
             <div className="tabs">
-              <button className={`tab ${tab === "llm" ? "active" : ""}`} onClick={() => setTab("llm")}>Claude</button>
+              <button className={`tab ${tab === "llm" ? "active" : ""}`} onClick={() => setTab("llm")}>Muse Spark</button>
               <button className={`tab ${tab === "baseline" ? "active" : ""}`} onClick={() => setTab("baseline")}>Baseline</button>
             </div>
             {shown && !shown.is_active && !s.allocated_settlement_id && (
@@ -91,8 +119,8 @@ export function SessionDetail() {
         }
       >
         {!shown ? (
-          <Empty icon={<Sparkles size={22} />} title={tab === "llm" ? "No Claude attribution yet" : "No baseline yet"}>
-            Run attribution: Claude reads the evidence below and proposes weights with citations; code then drops anything uncited, hallucinated or merely present, and enforces the per-package cap from your policy.
+          <Empty icon={<Sparkles size={22} />} title={tab === "llm" ? "No Muse Spark attribution yet" : "No baseline yet"}>
+            Run attribution: Muse Spark reads the evidence below and proposes weights with citations; code then drops anything uncited, hallucinated or merely present, and enforces the per-package cap from your policy.
             {runs.length === 0 && cands.length > 0 && (
               <> For the eval, label packages in “Your ground truth” first: labels saved before any attribution runs count as blind.</>
             )}
@@ -101,7 +129,7 @@ export function SessionDetail() {
           <div className="grid-2" style={{ alignItems: "start" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {shown.validated.weights.map((w: any) => (
-                <div key={w.name} className="card" style={{ padding: 14, boxShadow: "none" }}>
+                <div key={`${w.ecosystem}:${w.name}`} className="card" style={{ padding: 14, boxShadow: "none" }}>
                   <div className="row" style={{ gap: 8 }}>
                     <EcoIcon ecosystem={w.ecosystem} />
                     <strong>{w.name}</strong>
@@ -137,16 +165,16 @@ export function SessionDetail() {
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               {compareKeys.length > 0 && llm && base && (
                 <div className="card" style={{ padding: 12, boxShadow: "none" }}>
-                  <div className="row" style={{ padding: "2px 4px 6px" }}><FlaskConical size={15} color="var(--violet)" /><h3>Claude vs import-count baseline</h3></div>
+                  <div className="row" style={{ padding: "2px 4px 6px" }}><FlaskConical size={15} color="var(--violet)" /><h3>Muse Spark vs import-count baseline</h3></div>
                   <Chart
                     height={Math.max(180, compareKeys.length * 46)}
                     options={{
-                      data: compareKeys.map((k) => ({ pkg: k, claude: +(weightOf(llm, k) * 100).toFixed(1), baseline: +(weightOf(base, k) * 100).toFixed(1) })),
+                      data: compareKeys.map((k) => ({ pkg: label(k), muse: +(weightOf(llm, k) * 100).toFixed(1), baseline: +(weightOf(base, k) * 100).toFixed(1) })),
                       series: [
-                        { type: "bar", direction: "horizontal", xKey: "pkg", yKey: "claude", yName: "Claude", cornerRadius: 4 },
-                        { type: "bar", direction: "horizontal", xKey: "pkg", yKey: "baseline", yName: "Baseline", cornerRadius: 4, fill: "#c9ccd6", stroke: "#c9ccd6" },
+                        { type: "bar", direction: "horizontal", xKey: "pkg", yKey: "muse", yName: "Muse Spark", cornerRadius: 4 },
+                        { type: "bar", direction: "horizontal", xKey: "pkg", yKey: "baseline", yName: "Baseline", cornerRadius: 4, fill: neutral, stroke: neutral },
                       ],
-                      axes: { x: { type: "category" }, y: { type: "number", label: { formatter: ({ value }: any) => `${value}%` } } },
+                      axes: { x: { type: "category", position: "left" }, y: { type: "number", position: "bottom", label: { formatter: ({ value }: any) => `${value}%` } } },
                       legend: { position: "bottom" },
                     } as any}
                   />
@@ -168,9 +196,24 @@ export function SessionDetail() {
 
       <div className="split">
         <Card title="Evidence timeline" sub="Deterministic records extracted from hook payloads" icon={<ListTree size={17} />} tone="teal">
+          {set.evidence.length > 0 && (
+            <div className="row" style={{ gap: 8, marginBottom: 10 }}>
+              <label className="sr-only" htmlFor="ev-pkg">Package</label>
+              <select id="ev-pkg" className="input" style={{ width: "auto", minHeight: 32 }} value={evPkg} onChange={(e) => setEvPkg(e.target.value)}>
+                <option value="">All packages</option>
+                {[...new Set<string>(set.evidence.map((e: any) => e.package as string))].sort().map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <label className="sr-only" htmlFor="ev-kind">Evidence kind</label>
+              <select id="ev-kind" className="input" style={{ width: "auto", minHeight: 32 }} value={evKind} onChange={(e) => setEvKind(e.target.value)}>
+                <option value="">All kinds</option>
+                {[...new Set<string>(set.evidence.map((e: any) => e.kind as string))].map((k) => <option key={k} value={k}>{EVIDENCE[k]?.label ?? k}</option>)}
+              </select>
+              {(evPkg || evKind) && <button className="btn ghost sm" onClick={() => { setEvPkg(""); setEvKind(""); }}>Clear</button>}
+            </div>
+          )}
           {set.evidence.length === 0 ? <Empty icon={<ListTree size={22} />} title="No linked evidence" /> : (
             <div className="timeline" style={{ maxHeight: 620, overflow: "auto", paddingRight: 6 }}>
-              {dedupeById(set.evidence).map((e: any) => (
+              {dedupeById(set.evidence).filter((e: any) => (!evPkg || e.package === evPkg) && (!evKind || e.kind === evKind)).map((e: any) => (
                 <div key={e.id + e.package} className="tl-item">
                   <div className="tl-icon"><EvidenceIcon kind={e.kind} /></div>
                   <div style={{ minWidth: 0 }}>
@@ -181,7 +224,14 @@ export function SessionDetail() {
                       {e.link !== "direct" && <span className="pill outline" title="How this evidence was linked to the package">via {e.link.replace(/_/g, " ")}</span>}
                     </div>
                     <div className="muted small" style={{ marginTop: 3, overflowWrap: "anywhere" }}>{describe(e, s.cwd)}</div>
-                    <button className="btn ghost sm" style={{ marginTop: 2, paddingLeft: 0 }} onClick={async () => setRaw(await api(`/api/sessions/${id}/events/${e.id.split("_")[1]}`))}>
+                    <button className="btn ghost sm" style={{ marginTop: 2, paddingLeft: 0 }} title="Exactly what the hook sent. It can contain your own code, so it always needs the admin token."
+                      onClick={async () => {
+                        try {
+                          setRaw(await api(`/api/sessions/${id}/events/${e.id.split("_")[1]}`, { admin: true }));
+                        } catch (x) {
+                          toast((x as Error).message, "error");
+                        }
+                      }}>
                       <Braces size={13} />Raw hook payload
                     </button>
                   </div>
@@ -191,7 +241,7 @@ export function SessionDetail() {
           )}
           {set.unattributed.length > 0 && (
             <details style={{ marginTop: 12 }}>
-              <summary className="muted small" style={{ cursor: "pointer" }}>{set.unattributed.length} record(s) not linked to any package</summary>
+              <summary className="muted small" style={{ cursor: "pointer" }}>{plural(set.unattributed.length, "record")} not linked to any package</summary>
               {set.unattributed.map((u: any) => (
                 <div key={u.id} className="check small"><EvidenceIcon kind={u.kind} size={14} /><div><code>{u.id}</code> {u.reason}</div></div>
               ))}
@@ -229,17 +279,9 @@ export function SessionDetail() {
       </div>
 
       {raw && (
-        <div className="modal-back" onClick={() => setRaw(null)}>
-          <div className="modal" style={{ maxWidth: 760 }} onClick={(e) => e.stopPropagation()}>
-            <div className="card-head">
-              <div className="icon-tile"><Braces size={17} /></div>
-              <div><h2>{raw.hook_event_name} · {raw.tool_name}</h2><div className="sub">Exactly what the hook sent (secret files redacted on your machine)</div></div>
-              <div className="spacer" />
-              <button className="btn ghost sm" onClick={() => setRaw(null)}><X size={16} /></button>
-            </div>
-            <div className="card-body"><pre className="json">{JSON.stringify(raw.payload, null, 2)}</pre></div>
-          </div>
-        </div>
+        <Modal width={760} title={`${raw.hook_event_name} · ${raw.tool_name ?? "session event"}`} sub="Exactly what the hook sent (secret files redacted on your machine)" icon={<Braces size={17} />} onClose={() => setRaw(null)}>
+          <pre className="json">{JSON.stringify(raw.payload, null, 2)}</pre>
+        </Modal>
       )}
     </div>
   );
@@ -269,7 +311,7 @@ function describe(e: any, cwd?: string | null): string {
   if (d.libraryId || d.libraryName) return `${d.libraryId || d.libraryName}${d.query ? ` — ${d.query}` : ""}`;
   if (d.path) return rel(d.path);
   if (d.file) {
-    const lines = d.usage_lines != null ? ` · ${d.usage_lines} line(s) using ${(d.bindings ?? []).join(", ") || "it"}` : "";
+    const lines = d.usage_lines != null ? ` · ${plural(d.usage_lines, "line")} using ${(d.bindings ?? []).join(", ") || "it"}` : "";
     return `${rel(d.file)}${lines}${d.type_only ? " · type-only" : ""}`;
   }
   return "";
@@ -291,7 +333,7 @@ function LabelEditor({ sessionId, candidates, labels, blind, attributed, onSaved
   const toast = useToast();
   if (!candidates.length) return null;
   return (
-    <Card title="Your ground truth" sub="Label packages to score Claude against the baseline on the Eval page" icon={<FlaskConical size={17} />} tone="violet">
+    <Card title="Your ground truth" sub="Label packages to score Muse Spark against the baseline on the Eval page" icon={<FlaskConical size={17} />} tone="violet">
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {candidates.map((c) => {
           const k = `${c.ecosystem}:${c.name}`;
@@ -327,13 +369,81 @@ function LabelEditor({ sessionId, candidates, labels, blind, attributed, onSaved
               return { ecosystem, package: rest.join(":"), label };
             });
             const r = await api<any>(`/api/sessions/${sessionId}/labels`, { method: "PUT", body: { labels: payload }, admin: true });
-            toast(`Saved ${payload.length} label(s)${payload.length ? (r.blind ? " (blind)" : " (not blind)") : ""}.`);
+            toast(`Saved ${plural(payload.length, "label")}${payload.length ? (r.blind ? " (blind)" : " (not blind)") : ""}.`);
             onSaved();
           }}
         >
           Save labels
         </ActionButton>
       </div>
+    </Card>
+  );
+}
+
+const pctStr = (w: number) => `${(w * 100).toFixed(w < 0.1 ? 1 : 0)}%`;
+
+function Receipt({ run, cands, project, sessionId }: { run: any; cands: any[]; project: string | null; sessionId: string }) {
+  const copy = useCopy();
+  const chartPalette = usePalette();
+  const paid = run.validated.weights.filter((w: any) => w.weight > 0);
+  const repoOf = (w: any) => cands.find((c) => c.ecosystem === w.ecosystem && c.name === w.name)?.repo as string | undefined;
+  return (
+    <Card
+      title="Session receipt"
+      sub={`${run.method === "llm" ? "Muse Spark" : "Import-count baseline"} · validated by code${run.is_active ? " · used for payouts" : ""}`}
+      icon={<ReceiptText size={17} />}
+      tone="teal"
+      actions={paid.length > 0 && run.is_active && (
+        <ActionButton
+          className="btn sm"
+          title="The same Markdown the agent gets from the upstream_session_credits tool"
+          onRun={async () => {
+            const c = await api<{ markdown: string }>(`/api/sessions/${encodeURIComponent(sessionId)}/credits`);
+            await copy(c.markdown, "Credits copied as Markdown. Paste them into your PR description.");
+          }}
+        >
+          <ReceiptText size={13} />Copy credits for your PR
+        </ActionButton>
+      )}
+    >
+      {paid.length === 0 ? (
+        <p className="muted">No package earned a share in this session: nothing had evidence of real use, so this session's slice stays in the pool.</p>
+      ) : (
+        <div className="receipt stack">
+          <p style={{ color: "var(--text-2)" }}>
+            While working on <strong>{project ?? "this project"}</strong>, the agent relied on <strong>{paid.length}</strong> open-source package{paid.length === 1 ? "" : "s"}.
+            When this session is part of a payout, its share of the pool splits like this:
+          </p>
+          <div className="stacked" role="img" aria-label={paid.map((w: any) => `${w.name} ${pctStr(w.weight)}`).join(", ")}>
+            {paid.map((w: any, i: number) => <span key={`${w.ecosystem}:${w.name}`} style={{ width: `${w.weight * 100}%`, background: chartPalette[i % chartPalette.length] }} />)}
+            {run.validated.unallocated > 0.0001 && <span style={{ width: `${run.validated.unallocated * 100}%`, background: "var(--neutral-bar)" }} />}
+          </div>
+          <div className="list" style={{ marginTop: 2 }}>
+            {paid.map((w: any, i: number) => (
+              <div key={`${w.ecosystem}:${w.name}`} className="row" style={{ gap: 10, padding: "8px 0", borderTop: i ? "1px dashed var(--border)" : 0, flexWrap: "nowrap", alignItems: "flex-start" }}>
+                <span className="legend-dot" style={{ background: chartPalette[i % chartPalette.length], marginTop: 6 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="row" style={{ gap: 8 }}>
+                    <EcoIcon ecosystem={w.ecosystem} size={14} />
+                    <strong>{w.name}</strong>
+                    <Status value={w.classification} />
+                    {repoOf(w) && <a className="small" href={`https://${repoOf(w)}`} target="_blank" rel="noreferrer">{repoOf(w)!.replace("github.com/", "")}</a>}
+                  </div>
+                  {w.rationale && <div className="small muted" style={{ marginTop: 2 }}>{w.rationale}</div>}
+                </div>
+                <span className="num" style={{ fontWeight: 650, flex: "none" }}>{pctStr(w.weight)}</span>
+              </div>
+            ))}
+            {run.validated.unallocated > 0.0001 && (
+              <div className="row small muted" style={{ gap: 10, padding: "8px 0", borderTop: "1px dashed var(--border)", flexWrap: "nowrap" }}>
+                <span className="legend-dot" style={{ background: "var(--neutral-bar)" }} />
+                <span style={{ flex: 1 }}>Stays in the pool (per-package cap or nothing else qualified)</span>
+                <span className="num">{pctStr(run.validated.unallocated)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </Card>
   );
 }

@@ -2,7 +2,7 @@
 
 **Project:** Upstream, an entry for *Build What's Next with PayPal and AI* (Devpost)
 **Deadline:** Thu **Nov 12, 2026, 12:00 pm PT** (= Nov 13, 1:30 am IST), from the official rules
-**Status date:** Oct 18, 2026 (third pass; see section 5b)
+**Status date:** Oct 21, 2026 (seventh pass; see section 5f)
 
 **Short version:** the product is built, tested offline (18/18), documented, and committed to a local git repo. A second pass found and fixed a bug that silently broke Python package mapping on this machine, plus a related security issue (section 5a). It also added `npm run doctor` to check every credential live. Nothing has run against the live PayPal sandbox or Claude yet, because this machine still has no credentials. That first real run is the most important step left, and it's blocked on section 6A.
 
@@ -120,7 +120,7 @@ c:\Lang\paypal
 Five tools: `upstream_session_evidence`, `upstream_attribute_session`, `upstream_plan_payout`, `upstream_send_approved_payout`, `upstream_payout_status`. The model can never choose receivers or amounts, and can only send a batch a human approved.
 
 ### Web UI (`web/`)
-Pages: Overview (stats, money-flow diagram, checklist, PayPal activity) · Funding · Agent sessions · Session detail (evidence timeline, candidates, Claude-vs-baseline tabs + chart, validator flags, raw hook payload viewer, ground-truth labels) · Packages & maintainers · Payouts (policy checks, approve/send/sync/replay/cancel, request JSON) · Ledger (flow, donut, entries, PayPal API audit) · Attribution eval · Connect your agent · public Claim, Claim complete and `/c/:token` pages.
+Pages: Overview (next-step guide, money-flow pipeline, flow diagram, checklist, live sessions, PayPal activity) · Funding · Agent sessions · Session detail (evidence timeline, candidates, Claude-vs-baseline tabs + chart, validator flags, raw hook payload viewer, ground-truth labels) · Packages & maintainers · Payouts (policy checks, approve/send/sync/replay/cancel, request JSON) · Ledger (flow, donut, entries, PayPal API audit) · Attribution eval · Connect your agent · public Claim, Claim complete, `/c/:token` and `/r/:owner/:name` (repo page + badge) pages. Command palette, dark mode, money-trail drawer.
 
 ---
 
@@ -182,7 +182,130 @@ Pages: Overview (stats, money-flow diagram, checklist, PayPal activity) · Fundi
 
 **Still unverified:** how a chargeback (`PAYMENT.SALE.REVERSED`) shows up in the subscription transaction list. The schema's status enum has no `REVERSED`, so the sync may not book it. Check during the live run.
 
+### 5c. Fourth pass (Oct 18): competition check, new features, UI redesign
+
+**Competition.** A GitHub search found 287 public hackathon repos. One is a direct competitor with the **same name and tagline**: `iamarunbrahma/upstream` (public since Oct 14, hosted demo, npm CLI and Claude Code plugin, Gemini judge, Orders v2 + Log in with PayPal, live sandbox runs recorded). Full comparison, ratings and the remaining list are in `docs/COMPETITION.md`.
+
+**Added (all offline-tested; nothing uses mock data):**
+
+| Feature | Where |
+|---|---|
+| Public repo page `/r/:owner/:name` and README badge `/api/badge/:owner/:name.svg` | `server/src/public.ts`, `web/src/pages/Repo.tsx` |
+| Money trail: allocation → sessions → weight, rationale, cited evidence → payout items | `GET /api/trail`, `web/src/trail.tsx` (Packages, Payouts) |
+| Session receipt with *Copy credits for your PR* (Markdown) | `SessionDetail.tsx` |
+| Invite links for unclaimed repos; "money waiting" list and stepper on the claim page | `Packages.tsx`, `Claim.tsx` |
+| Confirm dialogs that name amount and receivers before approve / send / cancel / discard | `ui.tsx` (`useConfirm`), `Settlements.tsx` |
+| Live refresh (overview 15 s, sessions 10 s, open session 5 s, only while visible) | `api.ts` (`useApi` `poll`) |
+| Redesign: guided next step, numbered money-flow nav with done states, command palette (Ctrl/⌘ K, `/`), dark mode (system/light/dark, AG Grid + Charts follow), mobile drawer, skeletons, focus rings, 24 px+ targets | `styles.css`, `App.tsx`, `overview.tsx`, `palette.tsx`, `theme.ts`, `data.tsx` |
+| Fixed: the Claude-vs-baseline chart rendered "No data" (horizontal bar axes had no positions) | `SessionDetail.tsx` |
+
+Tests 24/24 (4 new in `server/test/public.test.ts`), typecheck clean, build clean. Screens were checked in headless Edge at 1440 px (light and dark) and 500 px against a throwaway database in the session scratchpad, not the repo.
+
+**Decision needed:** the shared name. `BRAND_NAME` already drives the UI, badge and public pages, so a rename is mostly the README, video and Devpost text.
+
+### 5d. Fifth pass (Oct 18): everything that doesn't need keys or a public URL
+
+Every PayPal field and path below was taken from PayPal's published schemas (`api/orders/v2/schema.json`, `api/payments/v2/schema.json`, `api/identity/v1/schema.json`, `api/payments.payouts-batch/v1/schema.json`) and docs pages, downloaded on Oct 18. The plugin format is from code.claude.com's plugin and skills references.
+
+| Added | Where | Verified against |
+|---|---|---|
+| One-time top-ups (Orders v2, intent CAPTURE): create with `payment_source.paypal.experience_context`, capture with a fixed `PayPal-Request-Id` and `Prefer: return=representation`, book gross + `paypal_fee` from `seller_receivable_breakdown`, refunds from `payments.refunds[].seller_payable_breakdown` | `paypal/orders.ts`, `topups.ts`, Funding page | Orders v2 schema (order_status, capture status enums, link rels `payer-action` / `approve`) |
+| Webhooks `CHECKOUT.ORDER.APPROVED` and `PAYMENT.CAPTURE.{COMPLETED,PENDING,DECLINED,DENIED,REFUNDED,REVERSED}` (trigger a read; reversal flagged, not booked) | `webhooks.ts`, `events.ts` | Event names page |
+| Log in with PayPal for maintainers: verified `email` instead of a typed one, unverified emails refused | `paypal/identity.ts`, `claims.ts`, claim pages | Integration guide + Identity v1 reference. The two give different userinfo paths; the code tries the reference path, then the guide's. Userinfo has no payer id, so payouts stay `recipient_type` EMAIL |
+| Agent tools: `upstream_session_credits`, `upstream_request_funding` (PayPal link only; `POLICY_MAX_AGENT_TOPUP` per 24 h, off by default) | `mcp/src/index.ts` | — |
+| Claude Code plugin: `.claude-plugin/plugin.json`, `hook/hooks.json`, skills `receipt`, `credits`, `fund` (`fund` has `disable-model-invocation: true`) | repo root | Plugin reference, skills reference |
+| New optional settings: `POLICY_MAX_TOPUP`, `POLICY_MAX_AGENT_TOPUP`, `PAYPAL_LOGIN_ENABLED` (all empty = off; doctor reports each) | `config.ts`, `.env.example`, `doctor.ts` | — |
+| UI: top-up card and history; claim pages offer *Use my PayPal account*; Payout rules page (live config); Ledger filters, search, CSV export, top-up/refund labels, donut colours matching the flow; Eval verdict and metric explainer; Connect page plugin tab and live status; evidence timeline filters; keyboard shortcuts (`?`) | `web/src` | Headless Edge screenshots, light and dark |
+
+Tests 32/32 (8 new: top-ups, Log in with PayPal, PR credits, plugin manifest). Typecheck and build clean. `claude plugin validate` couldn't run (the `claude` CLI isn't on PATH here); the test checks the same path rules.
+
+**First live run, additions to section B:** create and capture a top-up in the sandbox and compare gross/fee with the PayPal dashboard; refund it from the sandbox merchant account and check the ledger; enable Log in with PayPal on the app and confirm which userinfo path answers and that `email` comes back; load the plugin with `claude --plugin-dir .` and run `claude plugin validate .`.
+
+### 5e. Sixth pass (Oct 18): audit, design alignment, icons
+
+**Bugs found and fixed**
+
+| Bug | Fix |
+|---|---|
+| Top-up amount check was `/^d+(.d{1,2})?$/` (backslashes lost in generation), so "25" was always rejected | Rule built from the currency's ISO 4217 minor units via `Intl`, same as the server; checked for USD, JPY, BHD |
+| Claim page rejected pasted links like `github.com/o/r/tree/main`; `gitlab.com/a/b` parsed as owner "gitlab.com" (client and server) | Owner limited to GitHub's allowed characters, trailing paths accepted; server test added |
+| Two money views fell back to `"USD"` before data loaded | Currency only ever comes from the server |
+| Product name typed into 19 UI strings and the HTML `<title>` | Everything reads `BRAND_NAME` (UI context, server-templated title/description, manifest, badge); verified by running with `BRAND_NAME=Tributary` |
+| An empty optional plugin setting could reach the MCP server as the literal `${user_config.admin_token}` | Unsubstituted placeholders are treated as unset |
+| Starting a top-up without PayPal keys left a FAILED row behind | Refused before anything is stored |
+| "1 agent session(s)" and similar in 23 places | `plural()` helper |
+| Contrast: light "faint" text 2.98:1, amber pill text 3.65:1, dark "faint" 3.61:1 | New values all ≥ 4.5:1 (WCAG AA), computed with the WCAG formula |
+
+**Design alignment (sources)**
+- PayPal buttons follow PayPal's current guidance: blue on light backgrounds, white on dark ("Button color updates", developer.paypal.com/docsai/.../button-color-updates; gold is being replaced by blue). Colours `#0070E0` and `#001C64` and the mark itself come from PayPal's own files at paypalobjects.com/paypal-ui/logos/svg/. The old Simple Icons PayPal glyph is gone.
+- Neutral and status colours were checked against GitHub Primer's light and dark tokens (@primer/primitives 11.10.0), where maintainers already work.
+- Disabled buttons render flat grey in every variant instead of a faded brand fill.
+
+**Icons:** `npm run icons` (`scripts/icons.mjs`) renders favicon.svg, favicon-32, apple-touch-icon, icon-192/512 and a maskable 512 from one hand-written vector mark with resvg. No generated imagery. The maskable icon keeps the mark inside the 40%-radius safe zone (web.dev/articles/maskable-icon). The manifest is served at `/api/manifest.webmanifest` with `BRAND_NAME`.
+
+Tests 33/33, typecheck and build clean, no CRLF, mock/fake/hard-coded sweeps clean.
+
+### 5f. Seventh pass (Oct 21): competition re-check, bug audit, hard-coded data sweep
+
+Competition re-checked on GitHub (Devpost gallery still 403); results and ratings are in `docs/COMPETITION.md` §6.
+
+**Bugs found and fixed**
+
+| Bug | Fix |
+|---|---|
+| Hook exited with a crash code on Windows (libuv `UV_HANDLE_CLOSING` assertion) whenever it sent an event and then flushed the spool: `process.exit()` ran while fetch sockets were closing. Data arrived, but Claude Code would log a failed hook. Reproduced with the Oct 18 version too. | The hook ends by letting the event loop drain (`process.exitCode = 0`); 3/3 runs exit 0 in about 210 ms |
+| One torn line in `~/.upstream/spool.jsonl` made `JSON.parse` throw, so the spool never flushed again; parallel async hooks could also overwrite each other's appended events | The spool is claimed by an atomic rename, unparsable lines are skipped, unsent events are re-spooled, stale claimed files are recovered after 10 minutes; new test |
+| A superseded or revoked GitHub claim's private token could still change the receiver and re-activate itself, taking the repo back from the current maintainer | Only the repo's current claim (verified / receiver_unclaimed) can change its receiver; test |
+| The public `POST /api/claims/:id/verify` could re-activate an old FUNDING.yml claim whose token was still in the file, replacing the current maintainer | Verify only completes pending claims (verified is a no-op); test |
+| Approving a run with nothing payable set status `sent`: the UI showed "Sent to PayPal", offered a Replay that always errored, and the hourly job retried a batch that never existed | New status `held`; housekeeping only syncs settlements with a PayPal batch id; the page explains that PayPal wasn't called; test |
+| A GitHub rate limit (403) while verifying a FUNDING.yml claim said "No FUNDING.yml found" | Only 404 means missing; other statuses report the rate limit or HTTP code |
+| Payout item note started with the literal `Upstream:` and the PayPal product description said "Monthly budget that Upstream…" (brand and interval are configurable) | Both use `BRAND_NAME`; description no longer names an interval |
+| MCP `upstream_plan_payout` reported `reserved_for_unclaimed_repos` in raw minor units (500 for $5.00) | Settlement API adds formatted `planned`, `reserved`, `fee_reserve`; MCP uses them |
+| Session page kept its state when jumping between sessions (palette, trail): the label editor could save one session's labels onto the next | Page is keyed by session id |
+| Weights keyed by package name only, so an npm and a PyPI package with the same name collided in charts and lists | Keyed by ecosystem and name |
+| Funding stepper stuck at "Approved by you in PayPal" when the pool was funded by top-ups alone | Any PayPal-confirmed funding completes it |
+| A non-JSON error page (proxy, host) surfaced as a JSON parse error; one malformed funding URL could break the Packages grid | Both handled |
+
+**Hard-coded data sweep:** no mock, sample or seeded data anywhere in `web/` or `server/src`; the local database is empty (0 rows in every table). Every amount, count, status and policy value on screen comes from the API. Remaining literals are design tokens (colours, sizes), PayPal's own documented facts (30-day unclaimed return, 4 FUNDING.yml custom links, both re-checked), form placeholders and internal ids.
+
+**Verified live this pass:** real server + real hook against a scratch database (SessionStart + PostToolUse → `npm:dayjs` used via `dep_install`, `npm:zod` merely present). The Claude call shape was re-checked against the current Claude API reference, the Log in with PayPal userinfo path against PayPal's Identity v1 schema.json, and "Agent Toolkit has no Payouts tool" against the toolkit's README.
+
+Tests 37/37, typecheck and build clean.
+
+### 5g. Eighth pass (Oct 21): trust you can check
+
+| Change | Why |
+|---|---|
+| `DASHBOARD_ACCESS=private` by default: every operator read needs `ADMIN_TOKEN`; the UI shows an unlock screen and checks the token before storing it | Every dashboard read was public, including raw hook payloads that carry the developer's own code (Edit diffs, the first 8 KB of edited files), Bash commands and local paths |
+| Raw hook payloads need `ADMIN_TOKEN` even when `DASHBOARD_ACCESS=public` | Same reason |
+| MCP tools read session evidence with `INGEST_TOKEN` (plugin setting, or `~/.upstream/config.json`), never written into `.mcp.json` | Keeps the agent working on a private server without putting a secret into a project file |
+| Live audit: `server/src/audit.ts`, `GET /api/audit`, *Live audit* page. Ten invariants re-checked against stored records on each load; "nothing to check yet" instead of a green tick when there are no records; a banner when PayPal and Claude have never been called | Replace assertions with checks |
+| Funding page's four always-green ticks became neutral design notes linking to the audit; the refund note now states that partial subscription refunds aren't booked | They were hard-coded `ok`, and one overstated what the code does |
+| Repo page shows how the maintainer proved control (GitHub permission level, or the FUNDING.yml file and link anyone can re-check) and each PayPal-reported payout with its transaction id | Maintainers and funders can verify outside this server |
+| Swapping a session's attribution is refused once it's in a payout; `verified_at` keeps the first proof time | The money trail can't be rewritten afterwards |
+| Budget checks use the unclamped headroom (`balance - held - in flight`) | The audit's first run showed PayPal's actual fees can exceed the 2% reserve and leave held money uncovered; `available` (clamped at 0) hid it. With the default reserve, approval already refused, but with a misleading message; with `POLICY_PAYOUT_FEE_RESERVE=0` it would have approved paying money that wasn't there |
+
+New tests: `audit.test.ts` (a real payout run passes every check; a refund leaving held money uncovered fails and blocks the payout; altering one record at a time fails the matching check) and `access.test.ts` (starts the real server in each mode and checks every route over HTTP). Screenshots of the unlock screen and the audit page checked in headless Edge.
+
+Not done, on purpose: a hash-chained ledger. Without publishing the head hash somewhere the operator doesn't control, the operator could recompute the chain, so it would prove nothing.
+
+Tests 42/42, typecheck and build clean.
+
 ---
+
+### 5h. Ninth pass (Nov 6): attribution moved to Meta Muse Spark
+
+At the user's request, attribution now calls `muse-spark-1.3` on Meta's Model API instead of Claude. Claude Code remains the coding agent the hooks measure.
+
+| Fact | Source |
+|---|---|
+| Messages format at base `https://api.meta.ai`, `POST /v1/messages`, Bearer `MODEL_API_KEY` | dev.meta.ai/docs/protocols/messages |
+| `output_config.format` with `{type: "json_schema", schema}`; decoding constrained to the schema | dev.meta.ai/docs/protocols/messages, /docs/structured-output |
+| `output_config.effort` passes `low`, `medium`, `high`, `xhigh`; `max` isn't listed for Messages, so config no longer allows it | dev.meta.ai/docs/protocols/messages |
+| `stop_reason: refusal` when the model declines | dev.meta.ai/docs/protocols/messages |
+| Standard models aren't used for training; `-contributor` models may be | dev.meta.ai/docs/models |
+
+Removed the Claude-only `fallbacks` beta. Requests are only tested against a local server until a real key runs (`server/test/llm.test.ts`). Test environments now blank `MODEL_API_KEY`, so a key in `.env` can't cause paid calls during tests.
 
 ## 6. What's left
 
@@ -192,7 +315,7 @@ Pages: Overview (stats, money-flow diagram, checklist, PayPal activity) · Fundi
 |---|---|---|---|
 | 1 | PayPal sandbox app | developer.paypal.com → Apps & Credentials → Sandbox → create app → `PAYPAL_CLIENT_ID/SECRET` in `.env` | 10 min |
 | 2 | Sandbox personal account | Developer Dashboard → Sandbox accounts → create **Personal** (pays the subscription, receives a payout) | 5 min |
-| 3 | Anthropic API key | console.anthropic.com → `ANTHROPIC_API_KEY` | 5 min |
+| 3 | Meta Model API key | dev.meta.ai → API keys → `MODEL_API_KEY` | 5 min |
 | 4 | GitHub OAuth app | GitHub → Settings → Developer settings → OAuth Apps; callback `PUBLIC_BASE_URL/api/claims/github/callback` | 5 min |
 | 5 | Public https URL | Render (`render.yaml`, paid instance for the disk) **or** `cloudflared tunnel --url http://localhost:8787` for local (`cloudflared` is not installed on this machine yet) | 15–30 min |
 | 6 | ~~Create `.env`~~ | Done Oct 18: tokens generated. Only paste in the keys from rows 1, 3, 4 and 6b | done |

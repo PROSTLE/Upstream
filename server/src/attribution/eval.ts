@@ -72,7 +72,7 @@ function score(pairs: { labels: LabelRow[]; v: Validated }[]): MethodScore {
 
 /**
  * Labels are blind when every one of them was last changed before the session's first attribution
- * run, so the labeller could not have seen Claude's or the baseline's weights. Decided from stored
+ * run, so the labeller could not have seen Muse Spark's or the baseline's weights. Decided from stored
  * timestamps on the server, not from anything the UI reports.
  */
 function blindFor(labels: Pick<LabelRow, "updated_at">[], runs: Pick<RunRecord, "created_at">[]): boolean {

@@ -1,8 +1,9 @@
 // Preflight: checks each configured credential and dependency with a live, read-only call.
-// Writes nothing to PayPal, the database or the audit log, and sends no prompt to Claude.
+// Writes nothing to PayPal, the database or the audit log, and sends no prompt to the model.
 import fs from "node:fs";
 import path from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
+import { modelClient } from "../attribution/llm.ts";
 import { config, features, repoRoot } from "../config.ts";
 
 type Status = "ok" | "warn" | "fail" | "skip";
@@ -51,7 +52,7 @@ async function paypal() {
 async function publicUrl() {
   const base = config.PUBLIC_BASE_URL;
   if (!base.startsWith("https://")) {
-    report("warn", "PUBLIC_BASE_URL", `${base} is not https: PayPal will not deliver webhooks and GitHub OAuth only works on this machine. The hourly reconciler still syncs payouts and subscription payments.`);
+    report("warn", "PUBLIC_BASE_URL", `${base} is not https: PayPal will not deliver webhooks and GitHub OAuth only works on this machine. The hourly reconciler still syncs payouts, subscription payments and top-ups.`);
   }
   try {
     const { res, body } = await getJson(`${base}/api/health`, { signal: AbortSignal.timeout(8000) });
@@ -62,17 +63,17 @@ async function publicUrl() {
   }
 }
 
-async function anthropic() {
-  if (!features.llm) return report("skip", "Claude", "ANTHROPIC_API_KEY not set; only the import-count baseline runs when you attribute a session");
-  const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
+async function museModel() {
+  if (!features.llm) return report("skip", "Muse Spark", "MODEL_API_KEY not set; only the import-count baseline runs when you attribute a session");
+  const client = modelClient();
   try {
     const model = await client.models.retrieve(config.UPSTREAM_MODEL);
-    report("ok", "Claude", `key accepted; model ${model.id} (${model.display_name}) available, effort ${config.UPSTREAM_EFFORT}`);
+    report("ok", "Muse Spark", `key accepted at ${config.MODEL_API_BASE}; model ${model.id ?? config.UPSTREAM_MODEL} available, effort ${config.UPSTREAM_EFFORT}`);
   } catch (e) {
-    if (e instanceof Anthropic.AuthenticationError) report("fail", "Claude", "ANTHROPIC_API_KEY was rejected");
-    else if (e instanceof Anthropic.NotFoundError) report("fail", "Claude", `UPSTREAM_MODEL "${config.UPSTREAM_MODEL}" was not found for this key`);
-    else if (e instanceof Anthropic.APIError) report("fail", "Claude", `API error ${e.status}: ${e.message}`);
-    else report("fail", "Claude", (e as Error).message);
+    if (e instanceof Anthropic.AuthenticationError) report("fail", "Muse Spark", "MODEL_API_KEY was rejected");
+    else if (e instanceof Anthropic.NotFoundError) report("fail", "Muse Spark", `UPSTREAM_MODEL "${config.UPSTREAM_MODEL}" was not found for this key`);
+    else if (e instanceof Anthropic.APIError) report("fail", "Muse Spark", `API error ${e.status}: ${e.message}`);
+    else report("fail", "Muse Spark", (e as Error).message);
   }
 }
 
@@ -90,6 +91,14 @@ async function github() {
   else report("warn", "GitHub API", `anonymous; ${left}. FUNDING.yml lookups share this limit, so set GITHUB_TOKEN (a fine-grained token with public read access is enough)`);
 }
 
+function options() {
+  const back = `${config.PUBLIC_BASE_URL}/api/claims/paypal/callback`;
+  if (features.paypalLogin) report("ok", "Log in with PayPal", `enabled; in the app's Log in with PayPal settings the Return URL must be exactly ${back}, with Email shared`);
+  else report("skip", "Log in with PayPal", `off; maintainers type their payout email. To enable, turn it on for the PayPal app (Return URL ${back}) and set PAYPAL_LOGIN_ENABLED=true`);
+  report(config.POLICY_MAX_TOPUP ? "ok" : "skip", "Top-up cap", config.POLICY_MAX_TOPUP ? `one-time top-ups up to ${config.POLICY_MAX_TOPUP} ${config.TITHE_CURRENCY}` : "POLICY_MAX_TOPUP not set; only PayPal's limits apply to dashboard top-ups");
+  report(features.agentTopups ? "ok" : "skip", "Agent top-ups", features.agentTopups ? `agents may request up to ${config.POLICY_MAX_AGENT_TOPUP} ${config.TITHE_CURRENCY} per 24 hours, each approved in PayPal` : "off (POLICY_MAX_AGENT_TOPUP not set, or PayPal keys missing)");
+}
+
 async function metadata() {
   // Probe with a dependency of this server itself, read from its own manifest.
   const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, "server", "package.json"), "utf8"));
@@ -104,7 +113,7 @@ async function metadata() {
 console.log(`Upstream doctor: ${config.PAYPAL_ENV} @ ${config.PAYPAL_API_BASE}, public URL ${config.PUBLIC_BASE_URL}\n`);
 if (!fs.existsSync(path.join(repoRoot, ".env"))) report("warn", ".env", "no .env file; values come from the process environment only");
 secrets();
-for (const check of [paypal, anthropic, github, metadata, publicUrl]) {
+for (const check of [paypal, museModel, github, options, metadata, publicUrl]) {
   try {
     await check();
   } catch (e) {

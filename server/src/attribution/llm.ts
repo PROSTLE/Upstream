@@ -1,9 +1,17 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
+import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { config, features } from "../config.ts";
 import type { CandidateSet } from "../evidence/candidates.ts";
 import type { ProposedWeight } from "./validate.ts";
+
+/**
+ * Meta's Model API speaks the Anthropic Messages format at its base host, with a Bearer key
+ * (dev.meta.ai/docs/protocols/messages). apiKey: null stops the SDK sending a stray ANTHROPIC_API_KEY.
+ */
+export function modelClient() {
+  return new Anthropic({ baseURL: config.MODEL_API_BASE, apiKey: null, authToken: config.MODEL_API_KEY });
+}
 
 const Output = z.object({
   packages: z.array(
@@ -74,15 +82,14 @@ export async function llmProposal(set: CandidateSet): Promise<{
   model: string;
   usage: unknown;
 }> {
-  if (!features.llm) throw new Error("ANTHROPIC_API_KEY is not set; LLM attribution is unavailable.");
-  const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
-  const response = await client.beta.messages.parse({
+  if (!features.llm) throw new Error("MODEL_API_KEY is not set; LLM attribution is unavailable.");
+  const format = zodOutputFormat(Output);
+  // messages.create, not parse: parse reads the JSON first, so a refusal or truncated reply would surface as a JSON error.
+  const response = await modelClient().messages.create({
     model: config.UPSTREAM_MODEL,
     max_tokens: 16000,
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
     system: SYSTEM,
-    output_config: { effort: config.UPSTREAM_EFFORT, format: betaZodOutputFormat(Output) },
+    output_config: { effort: config.UPSTREAM_EFFORT, format },
     messages: [
       {
         role: "user",
@@ -91,10 +98,15 @@ export async function llmProposal(set: CandidateSet): Promise<{
     ],
   });
   if (response.stop_reason === "refusal") {
-    throw new Error(`Model declined to attribute this session (${response.stop_details?.category ?? "unspecified"}).`);
+    throw new Error("Model declined to attribute this session.");
   }
   if (response.stop_reason === "max_tokens") throw new Error("Attribution output was truncated (max_tokens).");
-  const raw = response.parsed_output;
-  if (!raw) throw new Error("Attribution output did not match the schema.");
+  const text = response.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
+  let raw: LlmOutput;
+  try {
+    raw = format.parse(text);
+  } catch {
+    throw new Error("Attribution output did not match the schema.");
+  }
   return { proposal: raw.packages, raw, model: response.model, usage: response.usage };
 }

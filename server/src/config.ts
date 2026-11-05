@@ -27,6 +27,9 @@ const schema = z.object({
   DATABASE_PATH: z.string().default("./data/upstream.db"),
   ADMIN_TOKEN: optional,
   INGEST_TOKEN: optional,
+  // "private" (default): the operator dashboard and its API need ADMIN_TOKEN to read. "public": anyone can read
+  // sessions, evidence, payouts and the ledger (for a demo). Raw hook payloads always need ADMIN_TOKEN.
+  DASHBOARD_ACCESS: z.enum(["private", "public"]).default("private"),
 
   PAYPAL_ENV: z.enum(["sandbox", "live"]).default("sandbox"),
   PAYPAL_API_BASE: optional,
@@ -48,14 +51,21 @@ const schema = z.object({
   POLICY_PAYOUT_FEE_RESERVE: fraction,
   POLICY_RESERVE_DAYS: z.coerce.number().int().positive(),
   POLICY_CANCEL_UNCLAIMED_AFTER_DAYS: z.coerce.number().int().positive(),
+  // Optional. Unset POLICY_MAX_TOPUP: Upstream adds no cap of its own to one-time top-ups (PayPal's limits still apply).
+  // Unset POLICY_MAX_AGENT_TOPUP: coding agents can't request top-ups at all.
+  POLICY_MAX_TOPUP: optional.pipe(decimalString.optional()),
+  POLICY_MAX_AGENT_TOPUP: optional.pipe(decimalString.optional()),
 
-  ANTHROPIC_API_KEY: optional,
+  MODEL_API_KEY: optional,
+  MODEL_API_BASE: z.string().url(),
   UPSTREAM_MODEL: z.string().min(1),
-  UPSTREAM_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]),
+  UPSTREAM_EFFORT: z.enum(["low", "medium", "high", "xhigh"]),
 
   GITHUB_CLIENT_ID: optional,
   GITHUB_CLIENT_SECRET: optional,
   GITHUB_TOKEN: optional,
+  // "true" once Log in with PayPal is switched on for the PayPal app (Apps & Credentials > Other features).
+  PAYPAL_LOGIN_ENABLED: optional,
 
   DEPSDEV_API_BASE: z.string().url(),
   ECOSYSTEMS_API_BASE: z.string().url(),
@@ -81,14 +91,18 @@ export const config = {
   PAYPAL_API_BASE:
     env.PAYPAL_API_BASE ??
     (env.PAYPAL_ENV === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com"),
+  // Log in with PayPal's authorize page (developer.paypal.com/docs/log-in-with-paypal/integrate/).
+  PAYPAL_WEB_BASE: env.PAYPAL_ENV === "live" ? "https://www.paypal.com" : "https://www.sandbox.paypal.com",
 };
 
 export type Config = typeof config;
 
 export const features = {
   paypal: Boolean(config.PAYPAL_CLIENT_ID && config.PAYPAL_CLIENT_SECRET),
-  llm: Boolean(config.ANTHROPIC_API_KEY),
+  llm: Boolean(config.MODEL_API_KEY),
   githubOAuth: Boolean(config.GITHUB_CLIENT_ID && config.GITHUB_CLIENT_SECRET),
   ingest: Boolean(config.INGEST_TOKEN),
   admin: Boolean(config.ADMIN_TOKEN),
+  paypalLogin: Boolean(config.PAYPAL_CLIENT_ID && config.PAYPAL_CLIENT_SECRET && config.PAYPAL_LOGIN_ENABLED === "true"),
+  agentTopups: Boolean(config.PAYPAL_CLIENT_ID && config.PAYPAL_CLIENT_SECRET && config.POLICY_MAX_AGENT_TOPUP),
 };

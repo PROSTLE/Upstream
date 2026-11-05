@@ -24,13 +24,16 @@ services:
         generateValue: true
       - key: INGEST_TOKEN
         generateValue: true
+      # private: the dashboard needs ADMIN_TOKEN to read (give judges the token in the testing notes).
+      - key: DASHBOARD_ACCESS
+        value: private
       - key: PAYPAL_ENV
         value: sandbox
       - key: PAYPAL_CLIENT_ID
         sync: false
       - key: PAYPAL_CLIENT_SECRET
         sync: false
-      - key: ANTHROPIC_API_KEY
+      - key: MODEL_API_KEY
         sync: false
       - key: GITHUB_CLIENT_ID
         sync: false
@@ -38,8 +41,10 @@ services:
         sync: false
       - key: GITHUB_TOKEN
         sync: false
+      - key: MODEL_API_BASE
+        value: https://api.meta.ai
       - key: UPSTREAM_MODEL
-        value: claude-opus-5-5
+        value: muse-spark-1.3
       - key: UPSTREAM_EFFORT
         value: medium
       - key: TITHE_AMOUNT
