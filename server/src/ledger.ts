@@ -18,11 +18,13 @@ export function book(entry: {
   refId?: string;
   memo?: string;
   source: "webhook" | "api_sync";
+  /** Whose money this is. Each person can only ever spend what they funded. */
+  userId: string;
 }): boolean {
   const res = db()
     .prepare(
-      `INSERT OR IGNORE INTO ledger(dedupe_key, occurred_at, kind, amount_minor, currency, ref_type, ref_id, memo, source)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
+      `INSERT OR IGNORE INTO ledger(dedupe_key, occurred_at, kind, amount_minor, currency, ref_type, ref_id, memo, source, user_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       entry.dedupeKey,
@@ -34,6 +36,7 @@ export function book(entry: {
       entry.refId ?? null,
       entry.memo ?? null,
       entry.source,
+      entry.userId,
     );
   return Number(res.changes) > 0;
 }
@@ -53,10 +56,10 @@ export interface PoolSummary {
   headroom: number;
 }
 
-export function poolSummary(currency: string): PoolSummary {
+export function poolSummary(currency: string, userId: string): PoolSummary {
   const sums = db()
-    .prepare("SELECT kind, COALESCE(SUM(amount_minor),0) AS total FROM ledger WHERE currency = ? GROUP BY kind")
-    .all(currency) as { kind: LedgerKind; total: number }[];
+    .prepare("SELECT kind, COALESCE(SUM(amount_minor),0) AS total FROM ledger WHERE currency = ? AND user_id = ? GROUP BY kind")
+    .all(currency, userId) as { kind: LedgerKind; total: number }[];
   const by = (k: LedgerKind) => Number(sums.find((s) => s.kind === k)?.total ?? 0);
   const fundingGross = by("FUNDING_GROSS");
   const fundingFees = by("FUNDING_FEE");
@@ -69,9 +72,9 @@ export function poolSummary(currency: string): PoolSummary {
   // and back to reserved when PayPal returns or fails an item.
   const alloc = db()
     .prepare(
-      "SELECT status, COALESCE(SUM(amount_minor),0) AS total FROM allocations WHERE currency = ? AND status IN ('reserved','in_batch') GROUP BY status",
+      "SELECT status, COALESCE(SUM(amount_minor),0) AS total FROM allocations WHERE currency = ? AND user_id = ? AND status IN ('reserved','in_batch') GROUP BY status",
     )
-    .all(currency) as { status: string; total: number }[];
+    .all(currency, userId) as { status: string; total: number }[];
   const reserved = Number(alloc.find((a) => a.status === "reserved")?.total ?? 0);
   // Until PayPal reports the real fees of an open batch, keep its fee reserve out of the pool.
   // Fees PayPal has already reported (booked as negative PAYOUT_FEE) are deducted from the hold.
@@ -82,10 +85,10 @@ export function poolSummary(currency: string): PoolSummary {
            WHERE l.kind = 'PAYOUT_FEE' AND l.ref_id IN (SELECT p.sender_item_id FROM payout_items p WHERE p.settlement_id = s.id)
          ), 0), 0)), 0) AS total
        FROM settlements s
-       WHERE s.currency = ? AND s.status IN ('approved','sending','sent')
+       WHERE s.currency = ? AND s.user_id = ? AND s.status IN ('approved','sending','sent')
          AND COALESCE(s.batch_status,'') NOT IN ('SUCCESS','DENIED','CANCELED')`,
     )
-    .get(currency) as { total: number };
+    .get(currency, userId) as { total: number };
   const inFlight =
     Number(alloc.find((a) => a.status === "in_batch")?.total ?? 0) + Number(feeHold.total);
 
@@ -104,6 +107,6 @@ export function poolSummary(currency: string): PoolSummary {
   };
 }
 
-export function ledgerEntries(limit = 500) {
-  return db().prepare("SELECT * FROM ledger ORDER BY occurred_at DESC, id DESC LIMIT ?").all(limit);
+export function ledgerEntries(userId: string, limit = 500) {
+  return db().prepare("SELECT * FROM ledger WHERE user_id = ? ORDER BY occurred_at DESC, id DESC LIMIT ?").all(userId, limit);
 }

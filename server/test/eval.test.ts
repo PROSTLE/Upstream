@@ -42,7 +42,7 @@ test("labels saved before attribution are blind; changing one afterwards makes t
   saveLabels("ev-1", labels);
   assert.equal(labelsAreBlind("ev-1"), true, "re-saving unchanged labels keeps their timestamps");
 
-  const report = evalReport();
+  const report = evalReport("local");
   assert.equal(report.llm.sessions, 1);
   assert.equal(report.blind.llm.sessions, 1, "blind session is in the blind subset");
   assert.equal(report.blind.llm.tp, 1);
@@ -64,7 +64,7 @@ test("a changed label after attribution is not blind, and a cleared label is rem
   const rows = db().prepare("SELECT package FROM labels WHERE session_id = 'ev-2'").all() as { package: string }[];
   assert.deepEqual(rows.map((r) => r.package), ["dayjs"], "lodash label was cleared");
 
-  const report = evalReport();
+  const report = evalReport("local");
   assert.equal(report.llm.sessions, 2, "both sessions count overall");
   assert.equal(report.blind.llm.sessions, 1, "only the first session is blind");
   assert.equal(report.perSession.find((s) => s.session_id === "ev-2")?.blind, false);

@@ -41,6 +41,10 @@ services:
         sync: false
       - key: GITHUB_TOKEN
         sync: false
+      - key: OPERATOR_GITHUB_LOGINS
+        sync: false
+      - key: POLICY_MAX_REVIEWS_PER_DAY
+        value: "20"
       - key: MODEL_API_BASE
         value: https://api.meta.ai
       - key: UPSTREAM_MODEL

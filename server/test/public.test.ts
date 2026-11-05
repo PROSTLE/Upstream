@@ -47,7 +47,7 @@ test("repos with money put the biggest unclaimed hold first", () => {
 });
 
 test("money trail links allocations to sessions, weights, rationale and cited evidence", () => {
-  const t = moneyTrail("github.com/colinhacks/zod");
+  const t = moneyTrail("github.com/colinhacks/zod", "local");
   assert.deepEqual(t.allocations.map((a) => a.id), ["a2"], "planned draft allocations are left out");
   const s1 = t.sessions.find((s) => s.id === "s1")!;
   assert.equal(s1.project, "shop");

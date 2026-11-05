@@ -29,6 +29,12 @@ export class ApiError extends Error {
   }
 }
 
+// Signed in with GitHub: the session cookie authorises requests, so no token is needed.
+let signedIn = false;
+export function setSignedIn(on: boolean) {
+  signedIn = on;
+}
+
 let needToken: (() => Promise<string | null>) | null = null;
 export function registerTokenPrompt(fn: () => Promise<string | null>) {
   needToken = fn;
@@ -39,8 +45,8 @@ export async function api<T = any>(path: string, init: { method?: string; body?:
   if (init.body !== undefined) headers["Content-Type"] = "application/json";
   // Reads send the token too when this browser holds one: a private dashboard needs it to read anything.
   let t = getAdminToken();
-  if (init.admin && !t && needToken) t = await needToken();
-  if (init.admin && !t) throw new ApiError(401, { error: "Admin token required for this action." });
+  if (init.admin && !t && !signedIn && needToken) t = await needToken();
+  if (init.admin && !t && !signedIn) throw new ApiError(401, { error: "Please sign in first." });
   if (t) headers["x-admin-token"] = t;
   const res = await fetch(path, {
     method: init.method ?? (init.body !== undefined ? "POST" : "GET"),

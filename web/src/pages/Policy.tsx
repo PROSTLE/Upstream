@@ -24,9 +24,9 @@ export function Policy() {
   return (
     <div className="page">
       <PageHead
-        eyebrow="Trust"
+        eyebrow="More"
         title="Payout rules"
-        subtitle="Every rule below is enforced in code before PayPal is called, and none of them can be changed by the model. Values come from this server's configuration."
+        subtitle="These rules are enforced in code before PayPal is called. The AI can't change them."
       />
       <div className="grid-2">
         {rules.map((r) => (
@@ -41,7 +41,7 @@ export function Policy() {
           </div>
         ))}
       </div>
-      <Card title="What the validator does to Muse Spark's weights" sub="server/src/attribution/validate.ts, after every model call" icon={<Gavel size={17} />} tone="violet">
+      <Card title="How code checks the AI's proposal" sub="Runs after every AI review" icon={<Gavel size={17} />} tone="violet">
         <ul className="stack" style={{ margin: 0, paddingLeft: 18, gap: 8 }}>
           <li>Drops any package that isn't a candidate in the session (no hallucinated packages).</li>
           <li>Drops evidence ids that don't exist, and zeroes any weight not backed by evidence linked to that package.</li>

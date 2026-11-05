@@ -70,8 +70,8 @@ before(() => {
   setDbForTests(openDb(":memory:"));
   setPayPalFetch(fakePayPal());
   // Funds in, as PayPal's subscription transaction sync would book them.
-  book({ dedupeKey: "fund:T1", kind: "FUNDING_GROSS", amountMinor: 1000, currency: "USD", source: "api_sync" });
-  book({ dedupeKey: "fundfee:T1", kind: "FUNDING_FEE", amountMinor: -79, currency: "USD", source: "api_sync" });
+  book({ dedupeKey: "fund:T1", kind: "FUNDING_GROSS", amountMinor: 1000, currency: "USD", source: "api_sync", userId: "local" });
+  book({ dedupeKey: "fundfee:T1", kind: "FUNDING_FEE", amountMinor: -79, currency: "USD", source: "api_sync", userId: "local" });
   const d = db();
   d.prepare("INSERT INTO sessions(id, started_at, last_event_at, status) VALUES ('sess1', ?, ?, 'attributed')").run(now(), now());
   d.prepare("INSERT INTO packages(ecosystem, name, repo) VALUES ('npm','zod','github.com/colinhacks/zod'), ('npm','dayjs','github.com/iamkun/dayjs')").run();
@@ -88,7 +88,7 @@ before(() => {
 });
 
 test("plan -> approve -> execute twice sends exactly one PayPal batch", async () => {
-  const { settlementId } = s.planSettlement();
+  const { settlementId } = s.planSettlement("local");
   const st = db().prepare("SELECT * FROM settlements WHERE id = ?").get(settlementId) as any;
   // available 9.21, distributable floor(921/1.02) = 902 -> zod 541 (claimed), dayjs 361 (reserved)
   assert.equal(st.status, "draft");
@@ -114,12 +114,12 @@ test("UNCLAIMED item books money out; cancelling returns it and re-earmarks for 
   it.transaction_status = "UNCLAIMED";
   it.payout_item_fee = { currency: "USD", value: "0.11" };
   s.applyPayoutItem(it, "webhook", "PAYMENT.PAYOUTS-ITEM.UNCLAIMED");
-  let pool = poolSummary("USD");
+  let pool = poolSummary("USD", "local");
   assert.equal(pool.payoutsSent, -541);
   assert.equal(pool.payoutFees, -11);
 
   await s.cancelUnclaimed(item.sender_item_id, { manual: true });
-  pool = poolSummary("USD");
+  pool = poolSummary("USD", "local");
   assert.equal(pool.returned, 541);
   const alloc = db().prepare("SELECT status FROM allocations WHERE package = 'zod'").get() as any;
   assert.equal(alloc.status, "reserved");

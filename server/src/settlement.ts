@@ -7,7 +7,7 @@ import { syncKnownSubscriptions } from "./funding.ts";
 import { syncOpenTopups } from "./topups.ts";
 import { book, poolSummary } from "./ledger.ts";
 import { fromMinor, splitByWeights, toMinor } from "./money.ts";
-import { PayPalError } from "./paypal/client.ts";
+import { PayPalError, runAsUser } from "./paypal/client.ts";
 import {
   cancelPayoutItem,
   createPayoutBatch,
@@ -25,15 +25,15 @@ export interface PolicyCheck {
 
 const days = (n: number) => n * 24 * 3600 * 1000;
 
-function releaseExpiredReservations(currency: string) {
+function releaseExpiredReservations(currency: string, userId: string) {
   db()
-    .prepare("UPDATE allocations SET status = 'released', updated_at = ? WHERE currency = ? AND status = 'reserved' AND expires_at IS NOT NULL AND expires_at < ?")
-    .run(now(), currency, now());
+    .prepare("UPDATE allocations SET status = 'released', updated_at = ? WHERE currency = ? AND user_id = ? AND status = 'reserved' AND expires_at IS NOT NULL AND expires_at < ?")
+    .run(now(), currency, userId, now());
 }
 
-export function discardDrafts() {
+export function discardDrafts(userId: string) {
   tx(() => {
-    const drafts = db().prepare("SELECT id FROM settlements WHERE status = 'draft'").all() as { id: string }[];
+    const drafts = db().prepare("SELECT id FROM settlements WHERE status = 'draft' AND user_id = ?").all(userId) as { id: string }[];
     for (const d of drafts) {
       db().prepare("DELETE FROM allocations WHERE settlement_id = ? AND status = 'planned'").run(d.id);
       db().prepare("DELETE FROM payout_items WHERE settlement_id = ?").run(d.id);
@@ -42,24 +42,25 @@ export function discardDrafts() {
   });
 }
 
-export function planSettlement(): { settlementId: string } {
+/** Plans one person's payout from their own funds, sessions and held money. */
+export function planSettlement(userId: string): { settlementId: string } {
   const currency = config.TITHE_CURRENCY;
-  const open = db().prepare("SELECT id, status FROM settlements WHERE status IN ('approved','sending')").get() as
+  const open = db().prepare("SELECT id, status FROM settlements WHERE status IN ('approved','sending') AND user_id = ?").get(userId) as
     | { id: string; status: string }
     | undefined;
   if (open) throw new Error(`Settlement ${open.id} is ${open.status}; send or resolve it before planning another.`);
-  discardDrafts();
-  releaseExpiredReservations(currency);
+  discardDrafts(userId);
+  releaseExpiredReservations(currency, userId);
 
-  const pool = poolSummary(currency);
+  const pool = poolSummary(currency, userId);
   const feeRate = config.POLICY_PAYOUT_FEE_RESERVE;
   const minPayout = toMinor(config.POLICY_MIN_PAYOUT, currency);
   const maxPayout = toMinor(config.POLICY_MAX_PAYOUT, currency);
   const distributable = Math.floor(pool.available / (1 + feeRate));
 
   const sessions = db()
-    .prepare("SELECT id FROM sessions WHERE status = 'attributed' AND allocated_settlement_id IS NULL ORDER BY started_at")
-    .all() as { id: string }[];
+    .prepare("SELECT id FROM sessions WHERE status = 'attributed' AND allocated_settlement_id IS NULL AND user_id = ? ORDER BY started_at")
+    .all(userId) as { id: string }[];
   const runs = sessions
     .map((s) => ({ session: s.id, run: activeRun(s.id) }))
     .filter((x): x is { session: string; run: NonNullable<ReturnType<typeof activeRun>> } => Boolean(x.run));
@@ -103,8 +104,8 @@ export function planSettlement(): { settlementId: string } {
   });
 
   const reservedRows = db()
-    .prepare("SELECT * FROM allocations WHERE status = 'reserved' AND currency = ? ORDER BY created_at")
-    .all(currency) as any[];
+    .prepare("SELECT * FROM allocations WHERE status = 'reserved' AND currency = ? AND user_id = ? ORDER BY created_at")
+    .all(currency, userId) as any[];
   for (const r of reservedRows) if (r.repo && !byRepo.has(r.repo)) byRepo.set(r.repo, { repo: r.repo, fresh: [] });
 
   const items: {
@@ -118,8 +119,8 @@ export function planSettlement(): { settlementId: string } {
     reservedIncluded: string[];
   }[] = [];
   const insertAlloc = db().prepare(
-    `INSERT INTO allocations(id, settlement_id, repo, ecosystem, package, amount_minor, currency, status, target, session_ids_json, created_at, expires_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,'planned',?,?,?,?,?)`,
+    `INSERT INTO allocations(id, settlement_id, repo, ecosystem, package, amount_minor, currency, status, target, session_ids_json, created_at, expires_at, updated_at, user_id)
+     VALUES (?,?,?,?,?,?,?,'planned',?,?,?,?,?,?)`,
   );
   const expires = new Date(Date.now() + days(config.POLICY_RESERVE_DAYS)).toISOString();
 
@@ -129,7 +130,7 @@ export function planSettlement(): { settlementId: string } {
       const reserved = reservedRows.filter((r) => r.repo === bucket.repo);
       if (!claim) {
         for (const f of bucket.fresh) {
-          insertAlloc.run(newId("alc"), settlementId, bucket.repo, f.e.ecosystem, f.e.name, f.amount, currency, "reserve", JSON.stringify([...f.e.sessions]), now(), expires, now());
+          insertAlloc.run(newId("alc"), settlementId, bucket.repo, f.e.ecosystem, f.e.name, f.amount, currency, "reserve", JSON.stringify([...f.e.sessions]), now(), expires, now(), userId);
         }
         continue;
       }
@@ -147,7 +148,7 @@ export function planSettlement(): { settlementId: string } {
         const fit = Math.min(f.amount, Math.max(maxPayout - total, 0));
         const id = newId("alc");
         if (fit > 0) {
-          insertAlloc.run(id, settlementId, bucket.repo, f.e.ecosystem, f.e.name, fit, currency, "payout", JSON.stringify([...f.e.sessions]), now(), null, now());
+          insertAlloc.run(id, settlementId, bucket.repo, f.e.ecosystem, f.e.name, fit, currency, "payout", JSON.stringify([...f.e.sessions]), now(), null, now(), userId);
           planned.push(id);
           total += fit;
           packages.add(f.e.name);
@@ -197,8 +198,8 @@ export function planSettlement(): { settlementId: string } {
 
     db()
       .prepare(
-        `INSERT INTO settlements(id, status, currency, pool_minor, planned_minor, reserved_minor, fee_reserve_minor, sender_batch_id, policy_json, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO settlements(id, status, currency, pool_minor, planned_minor, reserved_minor, fee_reserve_minor, sender_batch_id, policy_json, created_at, user_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         settlementId,
@@ -224,6 +225,7 @@ export function planSettlement(): { settlementId: string } {
           },
         }),
         now(),
+        userId,
       );
     const insItem = db().prepare(
       `INSERT INTO payout_items(sender_item_id, settlement_id, claim_id, repo, receiver, amount_minor, currency, note, allocation_ids_json, updated_at)
@@ -265,7 +267,7 @@ export function approveSettlement(settlementId: string) {
     const failed = policy.checks.filter((c) => !c.ok);
     if (failed.length) throw new Error(`Policy checks failed: ${failed.map((c) => c.label).join(", ")}`);
     // Re-check funds at approval time; money may have moved since planning.
-    const pool = poolSummary(s.currency);
+    const pool = poolSummary(s.currency, s.user_id);
     const reservedIncludedTotal = (db().prepare("SELECT allocation_ids_json FROM payout_items WHERE settlement_id = ?").all(settlementId) as any[])
       .flatMap((r) => json<{ reserved: string[] }>(r.allocation_ids_json, { reserved: [] }).reserved)
       .reduce((a, id) => a + Number((db().prepare("SELECT amount_minor FROM allocations WHERE id = ?").get(id) as any)?.amount_minor ?? 0), 0);
@@ -355,6 +357,7 @@ export function applyPayoutItem(item: PayoutItem, source: "webhook" | "api_sync"
     .prepare("SELECT * FROM payout_items WHERE payout_item_id = ? OR sender_item_id = ?")
     .get(item.payout_item_id, senderItemId ?? "") as any;
   if (!row) return { matched: false };
+  const userId = (db().prepare("SELECT user_id FROM settlements WHERE id = ?").get(row.settlement_id) as { user_id: string }).user_id;
   const status = eventType === "PAYMENT.PAYOUTS-ITEM.CANCELED" && item.transaction_status === "UNCLAIMED" ? "RETURNED" : item.transaction_status;
   const fee = item.payout_item_fee ? toMinor(item.payout_item_fee.value, item.payout_item_fee.currency) : null;
   tx(() => {
@@ -368,9 +371,9 @@ export function applyPayoutItem(item: PayoutItem, source: "webhook" | "api_sync"
       .run(item.payout_item_id, item.transaction_id ?? null, status ?? null, fee, item.errors ? JSON.stringify(item.errors) : null, now(), status ?? "", now(), row.sender_item_id);
 
     if (status && SENT_STATES.has(status)) {
-      book({ dedupeKey: `sent:${row.sender_item_id}`, kind: "PAYOUT_SENT", amountMinor: -row.amount_minor, currency: row.currency, refType: "payout_item", refId: row.sender_item_id, memo: `Payout to ${row.repo}`, source });
+      book({ dedupeKey: `sent:${row.sender_item_id}`, kind: "PAYOUT_SENT", amountMinor: -row.amount_minor, currency: row.currency, refType: "payout_item", refId: row.sender_item_id, memo: `Payout to ${row.repo}`, source, userId });
       if (fee && fee > 0) {
-        book({ dedupeKey: `fee:${row.sender_item_id}`, kind: "PAYOUT_FEE", amountMinor: -fee, currency: row.currency, refType: "payout_item", refId: row.sender_item_id, memo: `PayPal payout fee (reported by PayPal)`, source });
+        book({ dedupeKey: `fee:${row.sender_item_id}`, kind: "PAYOUT_FEE", amountMinor: -fee, currency: row.currency, refType: "payout_item", refId: row.sender_item_id, memo: `PayPal payout fee (reported by PayPal)`, source, userId });
       }
       db().prepare("UPDATE allocations SET status = 'paid', updated_at = ? WHERE payout_item_ref = ? AND status = 'in_batch'").run(now(), row.sender_item_id);
     }
@@ -379,7 +382,7 @@ export function applyPayoutItem(item: PayoutItem, source: "webhook" | "api_sync"
         .prepare("UPDATE allocations SET status = 'reserved', payout_item_ref = NULL, expires_at = ?, updated_at = ? WHERE payout_item_ref = ? AND status IN ('in_batch','paid')")
         .run(new Date(Date.now() + days(config.POLICY_RESERVE_DAYS)).toISOString(), now(), row.sender_item_id);
     if (status && RETURN_STATES.has(status)) {
-      book({ dedupeKey: `returned:${row.sender_item_id}`, kind: "PAYOUT_RETURNED", amountMinor: row.amount_minor, currency: row.currency, refType: "payout_item", refId: row.sender_item_id, memo: `Returned by PayPal (${status})`, source });
+      book({ dedupeKey: `returned:${row.sender_item_id}`, kind: "PAYOUT_RETURNED", amountMinor: row.amount_minor, currency: row.currency, refType: "payout_item", refId: row.sender_item_id, memo: `Returned by PayPal (${status})`, source, userId });
       reEarmark();
       markReceiverUnclaimed(row.claim_id);
     }
@@ -394,7 +397,7 @@ export function applyPayoutItem(item: PayoutItem, source: "webhook" | "api_sync"
 export async function syncSettlement(settlementId: string) {
   const s = db().prepare("SELECT * FROM settlements WHERE id = ?").get(settlementId) as any;
   if (!s?.payout_batch_id) throw new Error("This settlement has no PayPal batch yet.");
-  const { header, items } = await getPayoutBatch(s.payout_batch_id);
+  const { header, items } = await runAsUser(s.user_id as string, () => getPayoutBatch(s.payout_batch_id));
   db()
     .prepare("UPDATE settlements SET batch_status = ?, batch_fee_minor = ?, synced_at = ? WHERE id = ?")
     .run(header.batch_status, header.fees ? toMinor(header.fees.value, header.fees.currency) : null, now(), settlementId);
@@ -411,7 +414,8 @@ export async function cancelUnclaimed(senderItemId: string, opts: { manual: bool
   if (!opts.manual && age < days(config.POLICY_CANCEL_UNCLAIMED_AFTER_DAYS)) {
     throw new Error(`Policy waits ${config.POLICY_CANCEL_UNCLAIMED_AFTER_DAYS} days before cancelling.`);
   }
-  const res = await cancelPayoutItem(row.payout_item_id);
+  const owner = (db().prepare("SELECT user_id FROM settlements WHERE id = ?").get(row.settlement_id) as { user_id: string }).user_id;
+  const res = await runAsUser(owner, () => cancelPayoutItem(row.payout_item_id));
   applyPayoutItem(res.data, "api_sync", "PAYMENT.PAYOUTS-ITEM.CANCELED");
   return res.data;
 }

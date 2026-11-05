@@ -108,8 +108,8 @@ export function labelsAreBlind(sessionId: string): boolean {
   return blindFor(labels, runsForSession(sessionId));
 }
 
-export function evalReport() {
-  const labels = db().prepare("SELECT * FROM labels").all() as unknown as LabelRow[];
+export function evalReport(userId: string) {
+  const labels = db().prepare("SELECT l.* FROM labels l JOIN sessions s ON s.id = l.session_id WHERE s.user_id = ?").all(userId) as unknown as LabelRow[];
   const bySession = new Map<string, LabelRow[]>();
   for (const l of labels) bySession.set(l.session_id, [...(bySession.get(l.session_id) ?? []), l]);
 

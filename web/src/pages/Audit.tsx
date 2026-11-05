@@ -23,9 +23,9 @@ export function Audit() {
   return (
     <div className="page">
       <PageHead
-        eyebrow="Trust"
-        title="Live audit"
-        subtitle="Each check below re-reads this server's own records (ledger, allocations, claims, webhooks, attributions) every time the page loads. A rule with nothing to examine says so instead of showing a green tick."
+        eyebrow="More"
+        title="Safety checks"
+        subtitle="The app re-checks its own records every time this page loads. If there's nothing to check yet, it says so instead of showing a green tick."
         actions={<button className="btn" onClick={() => void reload()}><RefreshCw size={15} />Run again</button>}
       />
 
@@ -40,7 +40,7 @@ export function Audit() {
           <p>
             {s.fail
               ? "Each failure lists the records involved. Nothing here is fixed automatically: investigate before planning another payout."
-              : "The same report is available as JSON at GET /api/audit, so it can be scripted or archived."}
+              : "Checks run on real records only, so this list grows as money moves."}
           </p>
         </div>
       </section>
@@ -48,7 +48,7 @@ export function Audit() {
       {nothingLive && (
         <div className="callout amber">
           <AlertTriangle size={18} color="var(--amber)" />
-          <div>This server hasn't called PayPal or Muse Spark yet, so every check below runs on records created without either. Treat passes as "the rules hold for what exists", not as proof of a live run.</div>
+          <div>Nothing has gone through PayPal or Muse Spark in your account yet, so there are few real records to check. A pass means the rules hold for what exists, not that a full run has happened.</div>
         </div>
       )}
 
@@ -59,7 +59,7 @@ export function Audit() {
         <Stat label="Payout items PayPal reported on" value={a.payout_items_confirmed} icon={<Send size={15} />} tone="green" foot={`${plural(a.ledger_entries, "ledger entry", "ledger entries")} · ${plural(a.hook_events, "hook event")}`} />
       </div>
 
-      <Card title="Checks" sub="server/src/audit.ts" icon={<ShieldCheck size={17} />} tone="green">
+      <Card title="Checks" icon={<ShieldCheck size={17} />} tone="green">
         {data.checks.map((c: any) => {
           const st = STATE[c.status as keyof typeof STATE];
           return (

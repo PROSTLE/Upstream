@@ -7,13 +7,16 @@ import "./styles.css";
 import { App } from "./App.tsx";
 import { Providers } from "./ui.tsx";
 import { BrandProvider } from "./brand.tsx";
+import { AuthProvider } from "./auth.tsx";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <BrowserRouter>
       <BrandProvider>
         <Providers>
-          <App />
+          <AuthProvider>
+            <App />
+          </AuthProvider>
         </Providers>
       </BrandProvider>
     </BrowserRouter>

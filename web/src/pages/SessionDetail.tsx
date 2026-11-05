@@ -72,20 +72,20 @@ function SessionView({ id }: { id: string }) {
               disabled={Boolean(s.allocated_settlement_id)}
               title={s.allocated_settlement_id ? "Already part of a payout" : !ov?.features?.llm ? "MODEL_API_KEY is not set: only the baseline will run" : undefined}
               confirm={runs.length === 0 && cands.length > 0 && data.labels.length === 0 ? {
-                title: "Attribute before labelling?",
+                title: "Review before labelling?",
                 body: <p>Labels you save <strong>after</strong> attribution don't count as blind in the eval, because you've seen both methods' weights. You can label in “Your ground truth” first, or attribute now.</p>,
-                confirmLabel: "Attribute now",
+                confirmLabel: "Review now",
                 icon: <FlaskConical size={17} />,
               } : undefined}
               onRun={async () => {
                 const r = await api<any>(`/api/sessions/${id}/attribute`, { body: {}, admin: true });
-                if (r.llmError) toast(`Baseline saved. Muse Spark attribution failed: ${r.llmError}`, "error");
-                else toast("Attribution complete and validated.");
+                if (r.llmError) toast(`Baseline saved. The Muse Spark review failed: ${r.llmError}`, "error");
+                else toast("Review finished and checked by code.");
                 await reload();
               }}
             >
               <BrandIcon name="meta" size={15} mono />
-              {llm ? "Re-run attribution" : "Attribute with Muse Spark"}
+              {llm ? "Review again" : "Review with Muse Spark"}
             </ActionButton>
           </>
         }
@@ -101,7 +101,7 @@ function SessionView({ id }: { id: string }) {
       {shown && <Receipt run={shown} cands={cands} project={s.project} sessionId={id} />}
 
       <Card
-        title="Attribution"
+        title="Who gets what"
         sub={shown ? `${shown.method === "llm" ? `Muse Spark (${shown.model})` : "Import-count baseline"} · validated ${dateTime(shown.created_at)}${shown.is_active ? " · used for payouts" : ""}` : "Not attributed yet"}
         icon={<Scale size={17} />}
         actions={
@@ -119,8 +119,8 @@ function SessionView({ id }: { id: string }) {
         }
       >
         {!shown ? (
-          <Empty icon={<Sparkles size={22} />} title={tab === "llm" ? "No Muse Spark attribution yet" : "No baseline yet"}>
-            Run attribution: Muse Spark reads the evidence below and proposes weights with citations; code then drops anything uncited, hallucinated or merely present, and enforces the per-package cap from your policy.
+          <Empty icon={<Sparkles size={22} />} title={tab === "llm" ? "No Muse Spark review yet" : "No baseline yet"}>
+            Run the review: Muse Spark reads the evidence below and proposes weights with citations; code then drops anything uncited, hallucinated or merely present, and enforces the per-package cap from your policy.
             {runs.length === 0 && cands.length > 0 && (
               <> For the eval, label packages in “Your ground truth” first: labels saved before any attribution runs count as blind.</>
             )}

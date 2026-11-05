@@ -4,11 +4,12 @@ import { config, features } from "./config.ts";
 import { db, newId, now } from "./db.ts";
 import { book } from "./ledger.ts";
 import { fromMinor, toMinor } from "./money.ts";
-import { PayPalError, PayPalNotConfigured } from "./paypal/client.ts";
+import { PayPalError, PayPalNotConfigured, runAsUser } from "./paypal/client.ts";
 import { captureOrder, createOrder, getOrder, type Order } from "./paypal/orders.ts";
 
 export interface Topup {
   id: string;
+  user_id: string;
   order_id: string | null;
   amount_minor: number;
   currency: string;
@@ -26,24 +27,24 @@ export interface Topup {
 const DAY = 24 * 3600 * 1000;
 const get = (id: string) => db().prepare("SELECT * FROM topups WHERE id = ?").get(id) as Topup | undefined;
 
-export function listTopups(limit = 50): Topup[] {
-  return db().prepare("SELECT * FROM topups ORDER BY created_at DESC LIMIT ?").all(limit) as unknown as Topup[];
+export function listTopups(userId: string, limit = 50): Topup[] {
+  return db().prepare("SELECT * FROM topups WHERE user_id = ? ORDER BY created_at DESC LIMIT ?").all(userId, limit) as unknown as Topup[];
 }
 
 /** What an agent may still request in the current 24 hours, or null when agent top-ups are off. */
-export function agentAllowance(): { cap_minor: number; used_minor: number; left_minor: number } | null {
+export function agentAllowance(userId: string): { cap_minor: number; used_minor: number; left_minor: number } | null {
   if (!features.agentTopups) return null;
   const currency = config.TITHE_CURRENCY;
   const cap = toMinor(config.POLICY_MAX_AGENT_TOPUP!, currency);
   const since = new Date(Date.now() - DAY).toISOString();
   // Every request counts, approved or not, so an agent can't fish for approvals by re-asking.
   const used = Number(
-    (db().prepare("SELECT COALESCE(SUM(amount_minor),0) AS t FROM topups WHERE source = 'agent' AND currency = ? AND created_at > ?").get(currency, since) as { t: number }).t,
+    (db().prepare("SELECT COALESCE(SUM(amount_minor),0) AS t FROM topups WHERE user_id = ? AND source = 'agent' AND currency = ? AND created_at > ?").get(userId, currency, since) as { t: number }).t,
   );
   return { cap_minor: cap, used_minor: used, left_minor: Math.max(cap - used, 0) };
 }
 
-export async function startTopup(input: { amount: string; source: "dashboard" | "agent"; note?: string }) {
+export async function startTopup(input: { userId: string; amount: string; source: "dashboard" | "agent"; note?: string }) {
   if (!features.paypal) throw new PayPalNotConfigured();
   const currency = config.TITHE_CURRENCY;
   const amount = String(input.amount ?? "").trim();
@@ -51,7 +52,7 @@ export async function startTopup(input: { amount: string; source: "dashboard" | 
   const minor = toMinor(amount, currency);
   if (minor <= 0) throw new Error("The amount must be more than zero.");
   if (input.source === "agent") {
-    const a = agentAllowance();
+    const a = agentAllowance(input.userId);
     if (!a) throw new Error("Agent top-ups are off. Set POLICY_MAX_AGENT_TOPUP on the server to allow them.");
     if (minor > a.left_minor) {
       throw new Error(`That's more than an agent may request right now: ${fromMinor(a.left_minor, currency)} ${currency} left of ${fromMinor(a.cap_minor, currency)} per 24 hours.`);
@@ -62,8 +63,8 @@ export async function startTopup(input: { amount: string; source: "dashboard" | 
   const id = newId("top");
   const note = input.note?.trim().slice(0, 200) || null;
   db()
-    .prepare("INSERT INTO topups(id, amount_minor, currency, source, note, status, created_at, updated_at) VALUES (?,?,?,?,?,'CREATING',?,?)")
-    .run(id, minor, currency, input.source, note, now(), now());
+    .prepare("INSERT INTO topups(id, amount_minor, currency, source, note, status, created_at, updated_at, user_id) VALUES (?,?,?,?,?,'CREATING',?,?,?)")
+    .run(id, minor, currency, input.source, note, now(), now(), input.userId);
   try {
     const { order, approveUrl } = await createOrder({
       id,
@@ -83,6 +84,7 @@ export async function startTopup(input: { amount: string; source: "dashboard" | 
 
 /** Book what PayPal says about the order's capture and refunds. Safe to call any number of times. */
 export function applyOrder(topupId: string, order: Order): Topup {
+  const userId = get(topupId)!.user_id;
   const unit = order.purchase_units?.[0];
   const capture = unit?.payments?.captures?.[0];
   db()
@@ -102,6 +104,7 @@ export function applyOrder(topupId: string, order: Order): Topup {
         refId: topupId,
         memo: `One-time top-up, capture ${capture.id}`,
         source: "api_sync",
+        userId,
       });
     }
     const fee = capture.seller_receivable_breakdown?.paypal_fee;
@@ -116,6 +119,7 @@ export function applyOrder(topupId: string, order: Order): Topup {
         refId: topupId,
         memo: `PayPal fee on capture ${capture.id}`,
         source: "api_sync",
+        userId,
       });
     }
   }
@@ -133,6 +137,7 @@ export function applyOrder(topupId: string, order: Order): Topup {
       refId: topupId,
       memo: `Refund ${r.id} of a top-up`,
       source: "api_sync",
+        userId,
     });
     // On a refund PayPal hands back part of its fee, so the pool loses gross minus that (seller_payable_breakdown.net_amount).
     const fee = r.seller_payable_breakdown?.paypal_fee;
@@ -147,6 +152,7 @@ export function applyOrder(topupId: string, order: Order): Topup {
         refId: topupId,
         memo: `PayPal fee returned on refund ${r.id}`,
         source: "api_sync",
+        userId,
       });
     }
   }
@@ -159,7 +165,8 @@ export async function captureTopup(topupId: string): Promise<Topup> {
   if (!t?.order_id) throw new Error("Unknown top-up.");
   if (t.capture_id) return syncTopup(topupId);
   try {
-    const res = await captureOrder(t.order_id, `${t.id}-capture`);
+    const orderId = t.order_id;
+    const res = await runAsUser(t.user_id, () => captureOrder(orderId, `${t.id}-capture`));
     return applyOrder(t.id, res.data);
   } catch (e) {
     // e.g. ORDER_NOT_APPROVED when the payer hasn't finished, or an earlier capture already landed: read what PayPal holds.
@@ -175,7 +182,8 @@ export async function captureTopup(topupId: string): Promise<Topup> {
 export async function syncTopup(topupId: string): Promise<Topup> {
   const t = get(topupId);
   if (!t?.order_id) throw new Error("Unknown top-up.");
-  const res = await getOrder(t.order_id);
+  const orderId = t.order_id;
+  const res = await runAsUser(t.user_id, () => getOrder(orderId));
   return applyOrder(t.id, res.data);
 }
 

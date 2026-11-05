@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { db, json, now, tx } from "../db.ts";
+import { db, json, LOCAL_USER, now, tx } from "../db.ts";
 import { extractEvidence, type HookPayload } from "./extract.ts";
 import { depsFromManifestFiles, type ManifestDeps } from "./parse.ts";
 
@@ -22,54 +22,61 @@ export interface ManifestState {
   latest?: ManifestDeps & { captured_at: string };
 }
 
-export function ingest(p: IngestPayload): { stored: boolean; evidence: number } {
+/**
+ * Records one hook event in this person's space. Their ids are prefixed, because the session and tool ids come from
+ * their own machine: without the prefix, someone could send another person's session id and write into that session.
+ */
+export function ingest(p: IngestPayload, userId: string = LOCAL_USER): { stored: boolean; evidence: number } {
   if (!p.session_id || !p.hook_event_name) throw new Error("session_id and hook_event_name are required");
   const at = p.upstream?.sent_at ?? now();
-  const dedupeKey =
+  const scoped = (id: string) => (userId === LOCAL_USER ? id : `${userId}.${id}`);
+  const sessionId = scoped(p.session_id);
+  const dedupeKey = scoped(
     p.tool_use_id ??
     createHash("sha256")
       .update(`${p.session_id}|${p.hook_event_name}|${at}|${JSON.stringify(p.tool_input ?? {})}`)
-      .digest("hex");
+      .digest("hex"),
+  );
 
   return tx(() => {
     const d = db();
     d.prepare(
-      `INSERT INTO sessions(id, cwd, project, transcript_path, started_at, last_event_at)
-       VALUES (?,?,?,?,?,?)
+      `INSERT INTO sessions(id, cwd, project, transcript_path, started_at, last_event_at, user_id)
+       VALUES (?,?,?,?,?,?,?)
        ON CONFLICT(id) DO UPDATE SET last_event_at = MAX(sessions.last_event_at, excluded.last_event_at),
          cwd = COALESCE(sessions.cwd, excluded.cwd), transcript_path = COALESCE(excluded.transcript_path, sessions.transcript_path)`,
-    ).run(p.session_id, p.cwd ?? null, p.cwd ? path.basename(p.cwd) : null, p.transcript_path ?? null, at, at);
+    ).run(sessionId, p.cwd ?? null, p.cwd ? path.basename(p.cwd) : null, p.transcript_path ?? null, at, at, userId);
 
     const res = d
       .prepare(
         "INSERT OR IGNORE INTO hook_events(session_id, dedupe_key, hook_event_name, tool_name, received_at, payload_json) VALUES (?,?,?,?,?,?)",
       )
-      .run(p.session_id, dedupeKey, p.hook_event_name, p.tool_name ?? null, at, JSON.stringify(p));
+      .run(sessionId, dedupeKey, p.hook_event_name, p.tool_name ?? null, at, JSON.stringify(p));
     if (Number(res.changes) === 0) return { stored: false, evidence: 0 };
     const eventId = Number(res.lastInsertRowid);
 
     const manifest = p.upstream?.manifest;
     if (manifest) {
-      const row = d.prepare("SELECT manifest_json FROM sessions WHERE id = ?").get(p.session_id) as {
+      const row = d.prepare("SELECT manifest_json FROM sessions WHERE id = ?").get(sessionId) as {
         manifest_json: string | null;
       };
       const state = json<ManifestState>(row.manifest_json, {});
       const deps = { ...depsFromManifestFiles(manifest.files), captured_at: at };
       if (!state.initial) state.initial = deps;
       state.latest = deps;
-      d.prepare("UPDATE sessions SET manifest_json = ? WHERE id = ?").run(JSON.stringify(state), p.session_id);
+      d.prepare("UPDATE sessions SET manifest_json = ? WHERE id = ?").run(JSON.stringify(state), sessionId);
     }
     if (p.upstream?.py_import_map) {
       d.prepare("UPDATE sessions SET py_import_map_json = ? WHERE id = ?").run(
         JSON.stringify(p.upstream.py_import_map),
-        p.session_id,
+        sessionId,
       );
     }
     if (p.hook_event_name === "SessionEnd") {
       d.prepare("UPDATE sessions SET ended_at = ?, end_reason = ?, status = CASE WHEN status = 'open' THEN 'closed' ELSE status END WHERE id = ?").run(
         at,
         p.reason ?? null,
-        p.session_id,
+        sessionId,
       );
     }
 
@@ -80,7 +87,7 @@ export function ingest(p: IngestPayload): { stored: boolean; evidence: number } 
     drafts.forEach((e, i) => {
       insert.run(
         `ev_${eventId}_${i}`,
-        p.session_id,
+        sessionId,
         eventId,
         e.kind,
         e.ecosystem ?? null,

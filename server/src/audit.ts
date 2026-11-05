@@ -35,17 +35,17 @@ function check(id: string, label: string, why: string, checked: number, failures
 
 const rows = <T>(sql: string, ...args: (string | number | null)[]) => db().prepare(sql).all(...args) as T[];
 
-function ledgerTraces(): AuditCheck {
-  const entries = rows<{ id: number; kind: string; ref_type: string | null; ref_id: string | null }>("SELECT id, kind, ref_type, ref_id FROM ledger");
+function ledgerTraces(userId: string): AuditCheck {
+  const entries = rows<{ id: number; kind: string; ref_type: string | null; ref_id: string | null }>("SELECT id, kind, ref_type, ref_id FROM ledger WHERE user_id = ?", userId);
   const failures: string[] = [];
   for (const e of entries) {
-    const has = (sql: string) => Boolean(db().prepare(sql).get(e.ref_id ?? ""));
+    const has = (sql: string) => Boolean(db().prepare(sql).get(e.ref_id ?? "", userId));
     const ok =
       e.kind.startsWith("FUNDING_")
         ? e.ref_type === "subscription"
-          ? has("SELECT 1 FROM subscriptions WHERE id = ?")
-          : e.ref_type === "topup" && has("SELECT 1 FROM topups WHERE id = ? AND capture_id IS NOT NULL")
-        : e.ref_type === "payout_item" && has("SELECT 1 FROM payout_items WHERE sender_item_id = ? AND payout_item_id IS NOT NULL");
+          ? has("SELECT 1 FROM subscriptions WHERE id = ? AND user_id = ?")
+          : e.ref_type === "topup" && has("SELECT 1 FROM topups WHERE id = ? AND user_id = ? AND capture_id IS NOT NULL")
+        : e.ref_type === "payout_item" && has("SELECT 1 FROM payout_items p JOIN settlements s ON s.id = p.settlement_id WHERE p.sender_item_id = ? AND s.user_id = ? AND p.payout_item_id IS NOT NULL");
     if (!ok) failures.push(`ledger #${e.id} ${e.kind} → ${e.ref_type ?? "?"} ${e.ref_id ?? "?"} has no matching PayPal record`);
   }
   return check(
@@ -58,10 +58,10 @@ function ledgerTraces(): AuditCheck {
   );
 }
 
-function poolCovered(): AuditCheck {
+function poolCovered(userId: string): AuditCheck {
   const cur = config.TITHE_CURRENCY;
-  const p = poolSummary(cur);
-  const touched = Number((db().prepare("SELECT (SELECT COUNT(*) FROM ledger) + (SELECT COUNT(*) FROM allocations WHERE status IN ('reserved','in_batch')) AS n").get() as { n: number }).n);
+  const p = poolSummary(cur, userId);
+  const touched = Number((db().prepare("SELECT (SELECT COUNT(*) FROM ledger WHERE user_id = ?) + (SELECT COUNT(*) FROM allocations WHERE user_id = ? AND status IN ('reserved','in_batch')) AS n").get(userId, userId) as { n: number }).n);
   const committed = p.reserved + p.inFlight;
   const failures = committed > p.balance ? [`held ${fromMinor(p.reserved, cur)} + in flight ${fromMinor(p.inFlight, cur)} exceeds the PayPal-confirmed balance ${fromMinor(p.balance, cur)}`] : [];
   return check(
@@ -75,10 +75,11 @@ function poolCovered(): AuditCheck {
 }
 
 type Item = { sender_item_id: string; settlement_id: string; claim_id: string; repo: string; amount_minor: number; currency: string; transaction_status: string | null; fee_minor: number | null; payout_item_id: string | null; s_status: string; approved_at: string | null; policy_json: string };
-const items = () =>
+const items = (userId: string) =>
   rows<Item>(
     `SELECT p.*, s.status AS s_status, s.approved_at, s.policy_json FROM payout_items p JOIN settlements s ON s.id = p.settlement_id
-     WHERE s.status NOT IN ('draft','failed')`,
+     WHERE s.user_id = ? AND s.status NOT IN ('draft','failed')`,
+    userId,
   );
 
 function receiversVerified(list: Item[]): AuditCheck {
@@ -182,8 +183,8 @@ function webhooksVerified(): AuditCheck {
   );
 }
 
-function weightsCiteEvidence(): AuditCheck {
-  const sessions = rows<{ id: string }>("SELECT id FROM sessions WHERE status = 'attributed'");
+function weightsCiteEvidence(userId: string): AuditCheck {
+  const sessions = rows<{ id: string }>("SELECT id FROM sessions WHERE status = 'attributed' AND user_id = ?", userId);
   const failures: string[] = [];
   let checked = 0;
   for (const s of sessions) {
@@ -214,9 +215,10 @@ function weightsCiteEvidence(): AuditCheck {
   );
 }
 
-function allocationsTrace(): AuditCheck {
+function allocationsTrace(userId: string): AuditCheck {
   const allocs = rows<{ id: string; settlement_id: string; ecosystem: string; package: string; session_ids_json: string }>(
-    "SELECT id, settlement_id, ecosystem, package, session_ids_json FROM allocations WHERE status != 'planned'",
+    "SELECT id, settlement_id, ecosystem, package, session_ids_json FROM allocations WHERE user_id = ? AND status != 'planned'",
+    userId,
   );
   const failures: string[] = [];
   for (const a of allocs) {
@@ -243,10 +245,11 @@ function allocationsTrace(): AuditCheck {
   );
 }
 
-function reconciliationFresh(): AuditCheck {
+function reconciliationFresh(userId: string): AuditCheck {
   const open = rows<{ id: string; synced_at: string | null }>(
-    `SELECT id, synced_at FROM settlements WHERE status = 'sent' AND payout_batch_id IS NOT NULL AND (COALESCE(batch_status,'') NOT IN ('SUCCESS','DENIED','CANCELED')
+    `SELECT id, synced_at FROM settlements WHERE user_id = ? AND status = 'sent' AND payout_batch_id IS NOT NULL AND (COALESCE(batch_status,'') NOT IN ('SUCCESS','DENIED','CANCELED')
        OR id IN (SELECT settlement_id FROM payout_items WHERE transaction_status IN ('UNCLAIMED','PENDING','ONHOLD')))`,
+    userId,
   );
   const limit = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
   const failures = open
@@ -262,45 +265,46 @@ function reconciliationFresh(): AuditCheck {
   );
 }
 
-/** What has actually happened on this server, counted from its own records. */
-function activity() {
-  const one = <T>(sql: string) => db().prepare(sql).get() as T;
+/** What has actually happened in this person's space, counted from its records. Webhook totals are server-wide and name nobody. */
+function activity(userId: string) {
+  const one = <T>(sql: string, ...args: string[]) => db().prepare(sql).get(...args) as T;
   const calls = one<{ total: number; ok: number; first: string | null; last: string | null }>(
-    "SELECT COUNT(*) AS total, SUM(CASE WHEN status BETWEEN 200 AND 299 THEN 1 ELSE 0 END) AS ok, MIN(at) AS first, MAX(at) AS last FROM paypal_calls",
+    "SELECT COUNT(*) AS total, SUM(CASE WHEN status BETWEEN 200 AND 299 THEN 1 ELSE 0 END) AS ok, MIN(at) AS first, MAX(at) AS last FROM paypal_calls WHERE user_id = ?",
+    userId,
   );
-  const flags = rows<{ flags_json: string }>("SELECT flags_json FROM attribution_runs WHERE method = 'llm'").flatMap((r) => json<{ code: string }[]>(r.flags_json, []));
+  const flags = rows<{ flags_json: string }>("SELECT r.flags_json FROM attribution_runs r JOIN sessions s ON s.id = r.session_id WHERE r.method = 'llm' AND s.user_id = ?", userId).flatMap((r) => json<{ code: string }[]>(r.flags_json, []));
   const dropped = (code: string) => flags.filter((f) => f.code === code).length;
   return {
     paypal_calls: { total: Number(calls.total), succeeded: Number(calls.ok ?? 0), first_at: calls.first, last_at: calls.last },
     webhooks: one<{ received: number; verified: number }>(
       "SELECT COUNT(*) AS received, SUM(CASE WHEN verification_status = 'SUCCESS' THEN 1 ELSE 0 END) AS verified FROM webhook_events",
     ),
-    llm_runs: Number(one<{ n: number }>("SELECT COUNT(*) AS n FROM attribution_runs WHERE method = 'llm'").n),
-    models: rows<{ model: string }>("SELECT DISTINCT model FROM attribution_runs WHERE method = 'llm' AND model IS NOT NULL").map((r) => r.model),
+    llm_runs: Number(one<{ n: number }>("SELECT COUNT(*) AS n FROM attribution_runs r JOIN sessions s ON s.id = r.session_id WHERE r.method = 'llm' AND s.user_id = ?", userId).n),
+    models: rows<{ model: string }>("SELECT DISTINCT r.model FROM attribution_runs r JOIN sessions s ON s.id = r.session_id WHERE r.method = 'llm' AND r.model IS NOT NULL AND s.user_id = ?", userId).map((r) => r.model),
     validator: {
       hallucinated_packages: dropped("HALLUCINATED_PACKAGE"),
       unknown_evidence: dropped("CITED_UNKNOWN_EVIDENCE"),
       uncorroborated: dropped("UNCORROBORATED"),
     },
-    payout_items_confirmed: Number(one<{ n: number }>("SELECT COUNT(*) AS n FROM payout_items WHERE payout_item_id IS NOT NULL AND transaction_status IS NOT NULL").n),
-    ledger_entries: Number(one<{ n: number }>("SELECT COUNT(*) AS n FROM ledger").n),
-    hook_events: Number(one<{ n: number }>("SELECT COUNT(*) AS n FROM hook_events").n),
+    payout_items_confirmed: Number(one<{ n: number }>("SELECT COUNT(*) AS n FROM payout_items p JOIN settlements s ON s.id = p.settlement_id WHERE p.payout_item_id IS NOT NULL AND p.transaction_status IS NOT NULL AND s.user_id = ?", userId).n),
+    ledger_entries: Number(one<{ n: number }>("SELECT COUNT(*) AS n FROM ledger WHERE user_id = ?", userId).n),
+    hook_events: Number(one<{ n: number }>("SELECT COUNT(*) AS n FROM hook_events h JOIN sessions s ON s.id = h.session_id WHERE s.user_id = ?", userId).n),
   };
 }
 
-export function auditReport() {
-  const list = items();
+export function auditReport(userId: string) {
+  const list = items(userId);
   const checks = [
-    ledgerTraces(),
-    poolCovered(),
+    ledgerTraces(userId),
+    poolCovered(userId),
     receiversVerified(list),
     itemsMatchAllocations(list),
     ledgerMatchesPayPal(list),
     capsRespected(list),
     webhooksVerified(),
-    weightsCiteEvidence(),
-    allocationsTrace(),
-    reconciliationFresh(),
+    weightsCiteEvidence(userId),
+    allocationsTrace(userId),
+    reconciliationFresh(userId),
   ];
   return {
     generated_at: now(),
@@ -310,7 +314,7 @@ export function auditReport() {
       empty: checks.filter((c) => c.status === "empty").length,
     },
     checks,
-    activity: activity(),
+    activity: activity(userId),
     environment: config.PAYPAL_ENV,
     features,
   };

@@ -1,5 +1,5 @@
 import { db, now } from "../db.ts";
-import { syncKnownSubscriptions, syncSubscription, upsertSubscription } from "../funding.ts";
+import { subscriptionOwner, syncKnownSubscriptions, syncSubscription, upsertSubscription } from "../funding.ts";
 import { applyPayoutItem, syncSettlement } from "../settlement.ts";
 import { topupFromWebhook } from "../topups.ts";
 import type { PayoutItem } from "./payouts.ts";
@@ -56,7 +56,8 @@ async function processEvent(event: WebhookEvent) {
   if (t.startsWith("BILLING.SUBSCRIPTION.")) {
     const r = event.resource;
     if (r?.id && r?.plan_id) upsertSubscription(r);
-    if (r?.id) await syncSubscription(r.id);
+    // A subscription nobody here started is ignored, so a retry from PayPal can't fail forever.
+    if (r?.id && subscriptionOwner(r.id)) await syncSubscription(r.id);
     return;
   }
   if (t === "CHECKOUT.ORDER.APPROVED" || t.startsWith("PAYMENT.CAPTURE.")) {

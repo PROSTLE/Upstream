@@ -1,5 +1,10 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { config, features } from "../config.ts";
-import { db, now } from "../db.ts";
+import { db, LOCAL_USER, now } from "../db.ts";
+
+// Whose work a PayPal call is, so each person's call log shows only their own. Background jobs set it per record.
+const actor = new AsyncLocalStorage<string>();
+export const runAsUser = <T>(userId: string, fn: () => T): T => actor.run(userId, fn);
 
 export class PayPalError extends Error {
   status: number;
@@ -110,9 +115,9 @@ export function logCall(
   try {
     db()
       .prepare(
-        "INSERT INTO paypal_calls(at, method, path, request_id, status, debug_id, duration_ms, error_name) VALUES (?,?,?,?,?,?,?,?)",
+        "INSERT INTO paypal_calls(at, method, path, request_id, status, debug_id, duration_ms, error_name, user_id) VALUES (?,?,?,?,?,?,?,?,?)",
       )
-      .run(now(), method, path, requestId ?? null, status, debugId ?? null, ms, errorName ?? null);
+      .run(now(), method, path, requestId ?? null, status, debugId ?? null, ms, errorName ?? null, actor.getStore() ?? LOCAL_USER);
   } catch {
     // Audit logging must never break a payment call.
   }

@@ -35,14 +35,14 @@ test("the public verify endpoint can't re-activate a superseded FUNDING.yml clai
 });
 
 test("approving a run that only holds money for unclaimed repos marks it held, not sent", () => {
-  book({ dedupeKey: "fund:T1", kind: "FUNDING_GROSS", amountMinor: 1000, currency: "USD", source: "api_sync" });
+  book({ dedupeKey: "fund:T1", kind: "FUNDING_GROSS", amountMinor: 1000, currency: "USD", source: "api_sync", userId: "local" });
   db().prepare("INSERT INTO sessions(id, started_at, last_event_at, status) VALUES ('s1', ?, ?, 'attributed')").run(now(), now());
   db().prepare("INSERT INTO packages(ecosystem, name, repo) VALUES ('npm','zod','github.com/colinhacks/zod')").run();
   const validated = { weights: [{ ecosystem: "npm", name: "zod", weight: 0.4, classification: "meaningful", evidence_ids: ["ev_1_0"], rationale: "", proposed_weight: 1 }], unallocated: 0.6, flags: [] };
   db()
     .prepare("INSERT INTO attribution_runs(id, session_id, created_at, method, candidates_json, validated_json, flags_json, is_active) VALUES ('r1','s1',?,'llm','{}',?,'[]',1)")
     .run(now(), JSON.stringify(validated));
-  const { settlementId } = s.planSettlement();
+  const { settlementId } = s.planSettlement("local");
   s.approveSettlement(settlementId);
   const row = db().prepare("SELECT status, request_json FROM settlements WHERE id = ?").get(settlementId) as { status: string; request_json: string | null };
   assert.equal(row.status, "held");

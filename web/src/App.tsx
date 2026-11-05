@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { Link, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { Link, NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import {
-  ArrowLeftRight, BadgeCheck, Boxes, ExternalLink, FlaskConical, Gavel, Keyboard, KeyRound, LayoutDashboard, Lock, Menu, Monitor, Moon, PlugZap, Search, Send,
+  ArrowLeft, ArrowLeftRight, BadgeCheck, Boxes, ExternalLink, FlaskConical, Gavel, Keyboard, KeyRound, LayoutDashboard, Lock, LogOut, Menu, Monitor, Moon, PlugZap, Search, Send,
   ShieldCheck, Sun, TerminalSquare, Wallet,
 } from "lucide-react";
 import { getAdminToken, setAdminToken } from "./api.ts";
@@ -11,6 +11,8 @@ import { CommandPalette, type NavItem } from "./palette.tsx";
 import { useThemePref, type ThemePref } from "./theme.ts";
 import { BrandIcon, ErrorBox, Kbd, Loading, Logo, Modal, Skeleton } from "./ui.tsx";
 import { useBrand, useHealth } from "./brand.tsx";
+import { useAuth } from "./auth.tsx";
+const Home = lazy(() => import("./pages/Home.tsx").then((m) => ({ default: m.Home })));
 const Overview = lazy(() => import("./pages/Overview.tsx").then((m) => ({ default: m.Overview })));
 const Funding = lazy(() => import("./pages/Funding.tsx").then((m) => ({ default: m.Funding })));
 const Sessions = lazy(() => import("./pages/Sessions.tsx").then((m) => ({ default: m.Sessions })));
@@ -30,34 +32,35 @@ const RepoPage = lazy(() => import("./pages/Repo.tsx").then((m) => ({ default: m
 
 // The money flow, in order: fund → collect evidence → verify maintainers → pay → reconcile.
 const FLOW: (NavItem & { step: number })[] = [
-  { step: 1, to: "/funding", label: "Funding", icon: Wallet, keywords: "subscription tithe paypal money in" },
-  { step: 2, to: "/sessions", label: "Agent sessions", icon: TerminalSquare, keywords: "evidence claude code muse hook attribution" },
-  { step: 3, to: "/packages", label: "Packages & maintainers", icon: Boxes, keywords: "repos claims verified funding" },
-  { step: 4, to: "/settlements", label: "Payouts", icon: Send, keywords: "settlement batch paypal payouts money out" },
-  { step: 5, to: "/ledger", label: "Ledger", icon: ArrowLeftRight, keywords: "reconcile fees audit" },
+  { step: 1, to: "/funding", label: "Add funds", icon: Wallet, keywords: "subscription tithe paypal money in" },
+  { step: 2, to: "/sessions", label: "Coding sessions", icon: TerminalSquare, keywords: "evidence claude code muse hook attribution" },
+  { step: 3, to: "/packages", label: "Maintainers", icon: Boxes, keywords: "repos claims verified funding" },
+  { step: 4, to: "/settlements", label: "Pay maintainers", icon: Send, keywords: "settlement batch paypal payouts money out" },
+  { step: 5, to: "/ledger", label: "Money records", icon: ArrowLeftRight, keywords: "reconcile fees audit" },
 ];
 const OTHER: NavItem[] = [
-  { to: "/audit", label: "Live audit", icon: ShieldCheck, keywords: "trust proof checks invariants verify reconcile" },
-  { to: "/eval", label: "Attribution eval", icon: FlaskConical, keywords: "precision recall baseline labels" },
+  { to: "/audit", label: "Safety checks", icon: ShieldCheck, keywords: "trust proof checks invariants verify reconcile" },
+  { to: "/eval", label: "AI accuracy", icon: FlaskConical, keywords: "precision recall baseline labels" },
   { to: "/policy", label: "Payout rules", icon: Gavel, keywords: "policy caps limits fees reserve rules" },
   { to: "/connect", label: "Connect your agent", icon: PlugZap, keywords: "install hook mcp setup" },
 ];
-const ALL_NAV: NavItem[] = [{ to: "/", label: "Overview", icon: LayoutDashboard, keywords: "home dashboard" }, ...FLOW, ...OTHER];
+const ALL_NAV: NavItem[] = [{ to: "/dashboard", label: "Overview", icon: LayoutDashboard, keywords: "home dashboard" }, ...FLOW, ...OTHER];
 
 function titleFor(path: string): string {
-  if (path === "/") return "Overview";
+  if (path === "/dashboard") return "Overview";
   if (path.startsWith("/sessions/")) return "Session";
   if (path.startsWith("/settlements/")) return "Payout";
-  return ALL_NAV.find((n) => n.to !== "/" && path.startsWith(n.to))?.label ?? "";
+  return ALL_NAV.find((n) => n.to !== "/dashboard" && path.startsWith(n.to))?.label ?? "";
 }
 
 export function App() {
   const loc = useLocation();
-  const isPublic = loc.pathname.startsWith("/claim") || loc.pathname.startsWith("/c/") || loc.pathname.startsWith("/r/");
+  const isPublic = loc.pathname === "/" || loc.pathname.startsWith("/claim") || loc.pathname.startsWith("/c/") || loc.pathname.startsWith("/r/");
   if (isPublic) {
     return (
       <Suspense fallback={<div className="public-wrap"><div className="public-card"><Loading rows={1} /></div></div>}>
       <Routes>
+        <Route path="/" element={<Home />} />
         <Route path="/claim" element={<Claim />} />
         <Route path="/claim/complete" element={<ClaimComplete />} />
         <Route path="/c/:token" element={<PublicClaim />} />
@@ -80,13 +83,17 @@ function useHasToken() {
   return has;
 }
 
-/** A private dashboard (the default) shows nothing until the operator unlocks it with ADMIN_TOKEN. */
+/** The dashboard opens for anyone signed in with GitHub, showing their own space; ADMIN_TOKEN opens the operator's. Everyone else goes home. */
 function Gate() {
   const h = useHealth();
+  const auth = useAuth();
+  const loc = useLocation();
   const hasToken = useHasToken();
   if (h.error) return <div className="public-wrap"><div className="public-card"><ErrorBox error={`Can't reach the server: ${h.error}`} /></div></div>;
-  if (!h.access) return <div className="public-wrap"><div className="public-card"><Loading rows={1} /></div></div>;
-  if (h.access === "private" && !hasToken) return <Unlock />;
+  if (!h.access || auth.loading) return <div className="public-wrap"><div className="public-card"><Loading rows={1} /></div></div>;
+  const canEnter = hasToken || Boolean(auth.user);
+  if (loc.pathname === "/unlock") return canEnter ? <Navigate to="/dashboard" replace /> : <Unlock />;
+  if (h.access === "private" && !canEnter) return <Navigate to="/" replace />;
   return (
     <OverviewProvider>
       <Shell />
@@ -106,14 +113,13 @@ function Unlock() {
           <Logo size={36} />
           <div>
             <div className="brand-name" style={{ fontSize: 20 }}>{brand || <Skeleton h={20} w={100} />}</div>
-            <div className="brand-sub">Operator dashboard</div>
+            <div className="brand-sub">Sign in with a token</div>
           </div>
         </div>
         <section className="card card-pad stack">
-          <div className="row" style={{ gap: 10 }}><Lock size={18} color="var(--muted)" /><h1 style={{ fontSize: 20 }}>This dashboard is private</h1></div>
+          <div className="row" style={{ gap: 10 }}><Lock size={18} color="var(--muted)" /><h1 style={{ fontSize: 20 }}>Operator token</h1></div>
           <p className="muted">
-            Agent sessions, evidence, payouts and the ledger are shown only to the operator, who unlocks them with the server's <code>ADMIN_TOKEN</code>.
-            Maintainers don't need it: claiming a project and the public repo pages are open to everyone.
+            For the person running this server, when GitHub sign-in isn't available. The token is the <code>ADMIN_TOKEN</code> value in the server's settings. Maintainers don't need it.
           </p>
           <form
             className="stack"
@@ -142,7 +148,7 @@ function Unlock() {
             <div className="row">
               <button className="btn primary" type="submit" disabled={!v.trim() || busy}><KeyRound size={15} />Unlock</button>
               <div className="spacer" />
-              <a className="btn ghost" href="/claim"><BadgeCheck size={15} />I'm a maintainer</a>
+              <Link className="btn ghost" to="/"><ArrowLeft size={15} />Back to home</Link>
             </div>
           </form>
         </section>
@@ -184,7 +190,7 @@ function Shell() {
         <main id="main" tabIndex={-1} style={{ outline: "none" }}>
           <Suspense fallback={<div className="page"><Loading /></div>}>
           <Routes>
-            <Route path="/" element={<Overview />} />
+            <Route path="/dashboard" element={<Overview />} />
             <Route path="/funding" element={<Funding />} />
             <Route path="/sessions" element={<Sessions />} />
             <Route path="/sessions/:id" element={<SessionDetail />} />
@@ -228,7 +234,7 @@ function NotFound() {
   return (
     <div className="page">
       <h1>Page not found</h1>
-      <p className="muted">That address isn't part of the dashboard. <Link to="/">Back to the overview</Link>.</p>
+      <p className="muted">That address isn't part of the dashboard. <Link to="/dashboard">Back to the overview</Link>.</p>
     </div>
   );
 }
@@ -237,7 +243,7 @@ function Sidebar({ open }: { open: boolean }) {
   const { data } = useOverview();
   const brand = useBrand();
   const hasToken = useHasToken();
-  const access = useHealth().access;
+  const auth = useAuth();
   const c = data?.counts;
   const done: Record<number, boolean> = data
     ? {
@@ -251,18 +257,18 @@ function Sidebar({ open }: { open: boolean }) {
   const toAttribute = c ? Math.max(c.sessions - c.attributed, 0) : 0;
   return (
     <aside className={`sidebar${open ? " open" : ""}`} aria-label="Main navigation">
-      <Link to="/" className="brand">
+      <Link to="/dashboard" className="brand">
         <Logo />
         <div>
           <div className="brand-name">{brand || <Skeleton h={18} w={90} />}</div>
-          <div className="brand-sub">Agent-funded open source</div>
+          <div className="brand-sub">Pay the open source you use</div>
         </div>
       </Link>
-      <NavLink to="/" end className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
+      <NavLink to="/dashboard" end className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
         <LayoutDashboard size={17} strokeWidth={1.9} className="nav-icon" />
         Overview
       </NavLink>
-      <div className="nav-label">Money flow</div>
+      <div className="nav-label">Step by step</div>
       <div className="flow-rail">
         {FLOW.map((n) => (
           <NavLink key={n.to} to={n.to} className={({ isActive }) => `nav-link${isActive ? " active" : ""}`} title={done[n.step] ? "Done" : undefined}>
@@ -272,7 +278,7 @@ function Sidebar({ open }: { open: boolean }) {
           </NavLink>
         ))}
       </div>
-      <div className="nav-label">Trust & setup</div>
+      <div className="nav-label">More</div>
       {OTHER.map((n) => (
         <NavLink key={n.to} to={n.to} className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
           <n.icon size={17} strokeWidth={1.9} className="nav-icon" />
@@ -281,19 +287,17 @@ function Sidebar({ open }: { open: boolean }) {
       ))}
       <a className="nav-link" href="/claim" target="_blank" rel="noreferrer">
         <BadgeCheck size={17} strokeWidth={1.9} className="nav-icon" />
-        Maintainer claim page
+        Claim page
         <ExternalLink size={13} style={{ marginLeft: "auto", color: "var(--faint)" }} aria-label="opens in a new tab" />
       </a>
       <div className="sidebar-foot" style={{ marginTop: "auto" }}>
         <div className="row" style={{ gap: 8, flexWrap: "nowrap" }}>
-          {hasToken ? <KeyRound size={14} color="var(--green)" /> : <Lock size={14} color="var(--faint)" />}
-          <span style={{ fontWeight: 600 }}>{hasToken ? "Admin unlocked" : "Read-only"}</span>
-          <span className={`pill ${access === "public" ? "amber" : ""}`} title={access === "public" ? "DASHBOARD_ACCESS=public: anyone can read this dashboard" : "DASHBOARD_ACCESS=private: only the operator can read this dashboard"}>{access === "public" ? "Public" : "Private"}</span>
+          {auth.user?.avatar_url ? <img src={auth.user.avatar_url} alt="" width={24} height={24} style={{ borderRadius: "50%" }} /> : hasToken ? <KeyRound size={14} color="var(--green)" /> : <Lock size={14} color="var(--faint)" />}
+          <span style={{ fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{auth.user ? `@${auth.user.login}` : hasToken ? "Signed in with token" : "Read-only demo"}</span>
           <div className="spacer" />
-          {hasToken && <button className="btn ghost sm" onClick={() => setAdminToken(null)}>Lock</button>}
-        </div>
-        <div className="muted" style={{ marginTop: 4 }}>
-          {hasToken ? "Money actions are enabled in this browser." : "You'll be asked for the admin token the first time you act."}
+          {(auth.user || hasToken)
+            ? <button className="btn ghost sm" onClick={() => void auth.signOut()} aria-label="Sign out" title="Sign out"><LogOut size={14} /></button>
+            : <Link className="btn ghost sm" to="/">Sign in</Link>}
         </div>
       </div>
     </aside>
@@ -321,7 +325,7 @@ function TopBar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () => void
       {f && !f.paypal && <span className="pill amber" title="Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET"><span className="dot" />PayPal keys missing</span>}
       <span className="env-chip" title="PayPal environment">
         <BrandIcon name="paypal" size={14} />
-        PayPal {data?.environment ?? "…"}
+        {data?.environment === "sandbox" ? "PayPal test mode" : `PayPal ${data?.environment ?? "…"}`}
       </span>
       <span className="env-chip" title={f?.llm ? `Model ${data?.model}` : "Set MODEL_API_KEY to enable"}>
         <BrandIcon name="meta" size={14} />

@@ -4,9 +4,24 @@ import { DatabaseSync } from "node:sqlite";
 
 export type DB = DatabaseSync;
 
+/** The server's operator: ADMIN_TOKEN and INGEST_TOKEN act for this user, and it owns everything recorded before people had their own space. */
+export const LOCAL_USER = "local";
+
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
+
+-- People who sign in. Sessions, budgets, money records and payouts each belong to one of them.
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  github_id TEXT UNIQUE,
+  login TEXT,
+  name TEXT,
+  avatar_url TEXT,
+  ingest_token TEXT UNIQUE,                     -- what this person's coding agent sends evidence with
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT
+);
 
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
@@ -253,12 +268,25 @@ CREATE TABLE IF NOT EXISTS paypal_calls (
 );
 `;
 
+// Everything a person owns. Packages and maintainer claims stay shared: a maintainer verifies once, for everyone.
+const OWNED_TABLES = ["sessions", "subscriptions", "ledger", "allocations", "settlements", "topups", "paypal_calls"];
+
+function migrate(d: DatabaseSync) {
+  for (const table of OWNED_TABLES) {
+    const cols = d.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (!cols.some((c) => c.name === "user_id")) d.exec(`ALTER TABLE ${table} ADD COLUMN user_id TEXT NOT NULL DEFAULT '${LOCAL_USER}'`);
+    d.exec(`CREATE INDEX IF NOT EXISTS ${table}_user ON ${table}(user_id)`);
+  }
+  d.prepare("INSERT OR IGNORE INTO users(id, created_at) VALUES (?, ?)").run(LOCAL_USER, now());
+}
+
 let instance: DatabaseSync | undefined;
 
 export function openDb(file: string): DatabaseSync {
   if (file !== ":memory:") fs.mkdirSync(path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec(SCHEMA);
+  migrate(db);
   return db;
 }
 

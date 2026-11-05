@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import {
-  Activity, ArrowRight, CircleDollarSign, HandCoins, ListChecks, PartyPopper, PlugZap, TerminalSquare, Webhook,
+  ArrowRight, CircleDollarSign, ListChecks, PartyPopper, PlugZap, TerminalSquare,
 } from "lucide-react";
 import { useApi } from "../api.ts";
 import { ago, money } from "../format.ts";
@@ -22,14 +22,8 @@ export function Overview() {
   return (
     <div className="page">
       <PageHead
-        title="Your agent's open-source footprint"
-        subtitle={`${data.brand} records what your AI coding agent actually relies on, lets Muse Spark weigh it under hard rules, and pays verified maintainers through PayPal Payouts.`}
-        actions={
-          <>
-            <Link className="btn" to="/sessions"><TerminalSquare size={16} />Sessions</Link>
-            <Link className="btn primary" to="/settlements"><HandCoins size={16} />Plan payout</Link>
-          </>
-        }
+        title="Your open-source giving"
+        subtitle={`See which packages your AI agent really relied on, then pay the people who maintain them.`}
       />
 
       <NextStep done={done} total={steps.length} next={next} />
@@ -37,8 +31,8 @@ export function Overview() {
       <section className="card" aria-label="Money flow">
         <div className="pipeline">
           <Pipe n={1} to="/funding" label="Funded" value={money(p.fundingGross, cur)} foot={`PayPal fees ${money(-p.fundingFees, cur)}`} />
-          <Pipe n={2} to="/sessions" label="Agent sessions" value={String(c.sessions)} foot={`${c.evidence} evidence records`} />
-          <Pipe n={3} to="/sessions" label="Attributed" value={String(c.attributed)} foot={c.sessions - c.attributed > 0 ? `${c.sessions - c.attributed} waiting for attribution` : "All caught up"} />
+          <Pipe n={2} to="/sessions" label="Coding sessions" value={String(c.sessions)} foot={c.sessions ? `${c.evidence} evidence records` : "Nothing recorded yet"} />
+          <Pipe n={3} to="/sessions" label="Reviewed by AI" value={String(c.attributed)} foot={c.sessions - c.attributed > 0 ? `${c.sessions - c.attributed} waiting for review` : "All caught up"} />
           <Pipe n={4} to="/packages" label="Verified maintainers" value={String(c.verified_claims)} foot={`${money(p.reserved, cur)} held for unclaimed repos`} />
           <Pipe n={5} to="/ledger" label="Paid to maintainers" value={money(-p.payoutsSent - p.returned, cur)} foot={`Available now ${money(p.available, cur)}`} />
         </div>
@@ -47,8 +41,8 @@ export function Overview() {
       <div className="split">
         <Card title="Where the money goes" sub="Every number comes from PayPal-confirmed ledger entries" icon={<CircleDollarSign size={17} />}>
           {p.fundingGross === 0 ? (
-            <Empty icon={<CircleDollarSign size={22} />} title="No funds yet" action={<Link className="btn" to="/funding">Go to Funding</Link>}>
-              Approve the agent tithe once in PayPal. The first subscription payment shows here when PayPal confirms it, with PayPal's fee split out.
+            <Empty icon={<CircleDollarSign size={22} />} title="No funds yet" action={<Link className="btn" to="/funding">Add funds</Link>}>
+              Approve your monthly budget once in PayPal. The first subscription payment shows here when PayPal confirms it, with PayPal's fee split out.
             </Empty>
           ) : (
             <FlowDiagram pool={p} />
@@ -59,16 +53,16 @@ export function Overview() {
         </Card>
       </div>
 
-      <div className="split">
+      <div>
         <Card
-          title="Recent agent sessions"
+          title="Recent coding sessions"
           sub={<span className="row" style={{ gap: 6 }}><span className="pill green live" style={{ height: 18 }}><span className="dot" />Live</span>refreshes every 10 s</span>}
           icon={<TerminalSquare size={17} />}
           actions={<Link className="btn ghost sm" to="/sessions">All sessions <ArrowRight size={14} /></Link>}
         >
           {!sessions.data?.length ? (
-            <Empty icon={<TerminalSquare size={22} />} title="No sessions recorded" action={<Link className="btn" to="/connect"><PlugZap size={15} />Connect Claude Code</Link>}>
-              Install the hook and code as usual. Each tool call the agent makes becomes evidence here within seconds.
+            <Empty icon={<TerminalSquare size={22} />} title="No sessions recorded" action={<Link className="btn" to="/connect"><PlugZap size={15} />Connect your agent</Link>}>
+              Connect your agent and code as usual. What it uses shows up here within seconds.
             </Empty>
           ) : (
             <div className="list flush">
@@ -86,38 +80,6 @@ export function Overview() {
                   <span className="muted small" style={{ flex: "none" }}>{ago(s.last_event_at)}</span>
                 </Link>
               ))}
-            </div>
-          )}
-        </Card>
-        <Card title="PayPal activity" sub="API calls and signature-verified webhooks" icon={<Activity size={17} />} tone="teal">
-          {!data.recent_paypal_calls.length && !data.recent_webhooks.length ? (
-            <Empty icon={<Webhook size={22} />} title="No PayPal traffic yet">Calls {data.brand} makes to PayPal and webhooks PayPal sends back are listed here, with request and debug ids.</Empty>
-          ) : (
-            <div className="timeline">
-              {[
-                ...data.recent_webhooks.map((w: any) => ({ at: w.received_at, kind: "webhook", w })),
-                ...data.recent_paypal_calls.map((c: any) => ({ at: c.at, kind: "call", c })),
-              ]
-                .sort((a, b) => b.at.localeCompare(a.at))
-                .slice(0, 8)
-                .map((x: any, i: number) => (
-                  <div key={i} className="tl-item">
-                    <div className="tl-icon">{x.kind === "webhook" ? <Webhook size={14} color="var(--teal)" /> : <ArrowRight size={14} color="var(--accent)" />}</div>
-                    <div style={{ minWidth: 0 }}>
-                      {x.kind === "webhook" ? (
-                        <>
-                          <div className="row" style={{ gap: 8 }}><code style={{ overflowWrap: "anywhere" }}>{x.w.event_type}</code><Status value={x.w.verification_status === "SUCCESS" ? "verified" : "FAILED"} label={x.w.verification_status === "SUCCESS" ? "Signature verified" : x.w.verification_status} /></div>
-                          <div className="muted small">{ago(x.at)}</div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="row" style={{ gap: 8 }}><code style={{ overflowWrap: "anywhere" }}>{x.c.method} {x.c.path}</code><span className={`pill ${x.c.status && x.c.status < 300 ? "green" : "red"}`}>{x.c.status ?? "network"}</span></div>
-                          <div className="muted small">{ago(x.at)} · {x.c.duration_ms} ms{x.c.debug_id ? ` · debug ${x.c.debug_id}` : ""}</div>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                ))}
             </div>
           )}
         </Card>

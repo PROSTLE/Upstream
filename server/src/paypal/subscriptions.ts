@@ -61,18 +61,20 @@ export interface Subscription {
   id: string;
   status: "APPROVAL_PENDING" | "APPROVED" | "ACTIVE" | "SUSPENDED" | "CANCELLED" | "EXPIRED";
   plan_id: string;
+  custom_id?: string;
   subscriber?: { email_address?: string; payer_id?: string };
   billing_info?: unknown;
   links?: { rel: string; href: string }[];
 }
 
-export async function createSubscription(): Promise<{ id: string; approveUrl: string }> {
+export async function createSubscription(userId: string): Promise<{ id: string; planId: string; approveUrl: string }> {
   const planId = activePlanId();
   if (!planId) throw new Error("No PayPal plan yet. Run `npm run setup:paypal` first.");
   const res = await paypal<Subscription>("POST", "/v1/billing/subscriptions", {
     requestId: `upstream-sub-${crypto.randomUUID()}`,
     body: {
       plan_id: planId,
+      custom_id: userId,
       application_context: {
         brand_name: config.BRAND_NAME,
         shipping_preference: "NO_SHIPPING",
@@ -84,7 +86,7 @@ export async function createSubscription(): Promise<{ id: string; approveUrl: st
   });
   const approveUrl = link(res.data, "approve");
   if (!approveUrl) throw new Error("PayPal did not return an approve link for the subscription.");
-  return { id: res.data.id, approveUrl };
+  return { id: res.data.id, planId, approveUrl };
 }
 
 export async function getSubscription(id: string) {

@@ -2,14 +2,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import express, { type NextFunction, type Request, type Response } from "express";
+import { currentUser, finishGithubLogin, githubLoginAvailable, sessionUser, signOut, startGithubLogin } from "./auth.ts";
+import { ingestTokenFor, rotateIngestToken, userById, userIdForIngestToken } from "./users.ts";
 import { config, features, repoRoot } from "./config.ts";
-import { db, getSetting, initDb, json, now } from "./db.ts";
+import { db, getSetting, initDb, json, LOCAL_USER, now } from "./db.ts";
 import { ingest, type IngestPayload } from "./evidence/ingest.ts";
 import { buildCandidates } from "./evidence/candidates.ts";
 import { activeRun, attributeSession, runsForSession, setActiveRun } from "./attribution/run.ts";
 import { evalReport, LABELS, labelsAreBlind, saveLabels } from "./attribution/eval.ts";
 import { getPackage, normalizeRepo, resolveMany } from "./resolve/index.ts";
-import { badgeSvg, moneyTrail, repoSummary, reposWithMoney } from "./public.ts";
+import { badgeSvg, moneyTrail, packagesForUser, repoSummary, reposWithMoney } from "./public.ts";
 import { sessionCredits } from "./credits.ts";
 import { auditReport } from "./audit.ts";
 import { agentAllowance, captureTopup, listTopups, startTopup, syncTopup } from "./topups.ts";
@@ -28,10 +30,10 @@ import {
   updateReceiver,
   verifyFundingTokenClaim,
 } from "./claims.ts";
-import { currentSubscription, syncSubscription } from "./funding.ts";
+import { currentSubscription, startSubscription, syncSubscription } from "./funding.ts";
 import { ledgerEntries, poolSummary } from "./ledger.ts";
-import { PayPalError, PayPalNotConfigured } from "./paypal/client.ts";
-import { createSubscription, ensureProductAndPlan, activePlanId } from "./paypal/subscriptions.ts";
+import { PayPalError, PayPalNotConfigured, runAsUser } from "./paypal/client.ts";
+import { ensureProductAndPlan, activePlanId } from "./paypal/subscriptions.ts";
 import { ensureWebhook, webhookId, webhookUrl } from "./paypal/webhooks.ts";
 import { receiveWebhook } from "./paypal/events.ts";
 import {
@@ -56,30 +58,68 @@ const safeEqual = (a: string, b: string) => {
   return x.length === y.length && timingSafeEqual(x, y);
 };
 
-const isAdmin = (req: Request) => Boolean(config.ADMIN_TOKEN) && safeEqual(req.header("x-admin-token") ?? "", config.ADMIN_TOKEN!);
-const hasIngestToken = (req: Request) =>
-  Boolean(config.INGEST_TOKEN) && safeEqual(req.header("authorization")?.replace(/^Bearer\s+/i, "") ?? "", config.INGEST_TOKEN!);
+const bearer = (req: Request) => req.header("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
 
-function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  if (!config.ADMIN_TOKEN) return res.status(403).json({ error: "ADMIN_TOKEN is not set on the server, so state-changing actions are disabled." });
-  if (!isAdmin(req)) return res.status(401).json({ error: "Admin token required for this action." });
+/** The person behind a dashboard request: the operator's token, or someone signed in with GitHub. */
+function who(req: Request): { userId: string; operator: boolean } | null {
+  if (config.ADMIN_TOKEN && safeEqual(req.header("x-admin-token") ?? "", config.ADMIN_TOKEN)) return { userId: LOCAL_USER, operator: true };
+  const user = sessionUser(req);
+  return user ? { userId: user.id, operator: user.id === LOCAL_USER } : null;
+}
+
+/** The person whose coding agent holds this token. It can write evidence and read its own sessions back, nothing else. */
+function agentOwner(req: Request): string | null {
+  const token = bearer(req);
+  if (!token) return null;
+  if (config.INGEST_TOKEN && safeEqual(token, config.INGEST_TOKEN)) return LOCAL_USER;
+  return userIdForIngestToken(token) ?? null;
+}
+
+/** Whose space this request sees. An unauthenticated read only gets this far when DASHBOARD_ACCESS=public: the operator's demo. */
+const scope = (req: Request) => who(req)?.userId ?? agentOwner(req) ?? LOCAL_USER;
+
+const SIGN_IN = "Please sign in first.";
+
+function requireMember(req: Request, res: Response, next: NextFunction) {
+  if (!config.ADMIN_TOKEN) return res.status(403).json({ error: "ADMIN_TOKEN is not set on the server, so sign-in and money actions are disabled." });
+  if (!who(req)) return res.status(401).json({ error: SIGN_IN });
   next();
 }
 
-/** Operator data (payouts, ledger, claims, packages). Readable by anyone only when DASHBOARD_ACCESS=public. */
-function operatorRead(req: Request, res: Response, next: NextFunction) {
-  if (config.DASHBOARD_ACCESS === "public" || isAdmin(req)) return next();
-  res.status(401).json({ error: "This dashboard is private. Unlock it with the server's ADMIN_TOKEN." });
+/** Tasks for the whole server, not one person's space. */
+function requireOperator(req: Request, res: Response, next: NextFunction) {
+  const w = who(req);
+  if (!w) return res.status(401).json({ error: SIGN_IN });
+  if (!w.operator) return res.status(403).json({ error: "Only this server's operator can do that." });
+  next();
 }
 
-/**
- * Session evidence. The agent's own machine already holds INGEST_TOKEN (it writes this evidence), so the MCP
- * tools may read it back with that token; the dashboard uses ADMIN_TOKEN.
- */
-function sessionRead(req: Request, res: Response, next: NextFunction) {
-  if (config.DASHBOARD_ACCESS === "public" || isAdmin(req) || hasIngestToken(req)) return next();
-  res.status(401).json({ error: "This dashboard is private. Unlock it with the server's ADMIN_TOKEN." });
+/** In live mode everyone's money would sit in the operator's PayPal account, which needs legal review first. Sandbox money is not real. */
+function requireTestModeUnlessOperator(req: Request, res: Response, next: NextFunction) {
+  if (config.PAYPAL_ENV !== "sandbox" && !who(req)?.operator) return res.status(403).json({ error: "On this server, only the operator can move live money." });
+  next();
 }
+
+function memberRead(req: Request, res: Response, next: NextFunction) {
+  if (config.DASHBOARD_ACCESS === "public" || who(req)) return next();
+  res.status(401).json({ error: SIGN_IN });
+}
+
+function sessionRead(req: Request, res: Response, next: NextFunction) {
+  if (config.DASHBOARD_ACCESS === "public" || who(req) || agentOwner(req)) return next();
+  res.status(401).json({ error: SIGN_IN });
+}
+
+// Anything addressed by id answers "unknown" to anyone but its owner, so ids can't be probed.
+const ownerOf = (sql: string, id: string) => (db().prepare(sql).get(id) as { user_id: string } | undefined)?.user_id;
+const ownedBy = (sql: string, notFound: string, param: string) => (req: Request, res: Response, next: NextFunction) => {
+  if (ownerOf(sql, String(req.params[param])) !== scope(req)) return res.status(404).json({ error: notFound });
+  next();
+};
+const ownSession = ownedBy("SELECT user_id FROM sessions WHERE id = ?", "Unknown session", "id");
+const ownSettlement = ownedBy("SELECT user_id FROM settlements WHERE id = ?", "Unknown settlement", "id");
+const ownTopup = ownedBy("SELECT user_id FROM topups WHERE id = ?", "Unknown top-up", "id");
+const ownPayoutItem = ownedBy("SELECT s.user_id FROM payout_items p JOIN settlements s ON s.id = p.settlement_id WHERE p.sender_item_id = ?", "Unknown payout item", "senderItemId");
 
 // PayPal webhooks need the exact raw body for signature verification.
 app.post("/api/paypal/webhook", express.raw({ type: "*/*", limit: "1mb" }), async (req, res) => {
@@ -89,16 +129,18 @@ app.post("/api/paypal/webhook", express.raw({ type: "*/*", limit: "1mb" }), asyn
 });
 
 app.use(express.json({ limit: "4mb" }));
+// PayPal calls made while handling a request appear in that person's own call log.
+app.use((req, _res, next) => runAsUser(scope(req), next));
 
 // ---------- Ingest from the Claude Code hook ----------
 app.post("/api/ingest", (req, res) => {
   if (!config.INGEST_TOKEN) return res.status(503).json({ error: "INGEST_TOKEN is not set on the server." });
-  const auth = req.header("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
-  if (!safeEqual(auth, config.INGEST_TOKEN)) return res.status(401).json({ error: "Bad ingest token." });
+  const owner = agentOwner(req);
+  if (!owner) return res.status(401).json({ error: "Bad ingest token." });
   const batch = Array.isArray(req.body) ? (req.body as IngestPayload[]) : [req.body as IngestPayload];
   const results = batch.map((p) => {
     try {
-      return ingest(p);
+      return ingest(p, owner);
     } catch (e) {
       return { error: String(e) };
     }
@@ -107,9 +149,13 @@ app.post("/api/ingest", (req, res) => {
 });
 
 // ---------- Overview & health ----------
-app.get("/api/overview", operatorRead, (_req, res) => {
+app.get("/api/overview", memberRead, (req, res) => {
   const currency = config.TITHE_CURRENCY;
-  const count = (sql: string) => Number((db().prepare(sql).get() as { n: number }).n);
+  const userId = scope(req);
+  const operator = userId === LOCAL_USER;
+  const count = (sql: string) => Number((db().prepare(sql).get(userId) as { n: number }).n);
+  const pkgs = packagesForUser(userId);
+  const repos = new Set(pkgs.map((p) => getPackage(p.ecosystem as Ecosystem, p.name)?.repo).filter((r): r is string => Boolean(r)));
   res.json({
     brand: config.BRAND_NAME,
     environment: config.PAYPAL_ENV,
@@ -127,28 +173,70 @@ app.get("/api/overview", operatorRead, (_req, res) => {
       cancel_unclaimed_after_days: config.POLICY_CANCEL_UNCLAIMED_AFTER_DAYS,
     },
     model: config.UPSTREAM_MODEL,
-    pool: poolSummary(currency),
-    subscription: currentSubscription() ?? null,
+    viewer: { operator, login: userById(userId)?.login ?? null },
+    pool: poolSummary(currency, userId),
+    subscription: currentSubscription(userId) ?? null,
     plan_id: activePlanId() ?? null,
     webhook: { id: webhookId() ?? null, url: webhookUrl() },
     counts: {
-      sessions: count("SELECT COUNT(*) AS n FROM sessions"),
-      attributed: count("SELECT COUNT(*) AS n FROM sessions WHERE status = 'attributed'"),
-      evidence: count("SELECT COUNT(*) AS n FROM evidence"),
-      packages: count("SELECT COUNT(*) AS n FROM packages"),
-      verified_claims: count("SELECT COUNT(*) AS n FROM claims WHERE status = 'verified'"),
-      settlements: count("SELECT COUNT(*) AS n FROM settlements WHERE status != 'empty'"),
-      webhooks: count("SELECT COUNT(*) AS n FROM webhook_events"),
+      sessions: count("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?"),
+      attributed: count("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND status = 'attributed'"),
+      evidence: count("SELECT COUNT(*) AS n FROM evidence e JOIN sessions s ON s.id = e.session_id WHERE s.user_id = ?"),
+      packages: pkgs.length,
+      verified_claims: [...repos].filter((r) => payableClaim(r)).length,
+      settlements: count("SELECT COUNT(*) AS n FROM settlements WHERE user_id = ? AND status != 'empty'"),
+      webhooks: operator ? Number((db().prepare("SELECT COUNT(*) AS n FROM webhook_events").get() as { n: number }).n) : 0,
     },
-    recent_paypal_calls: db().prepare("SELECT * FROM paypal_calls ORDER BY id DESC LIMIT 12").all(),
-    recent_webhooks: db()
-      .prepare("SELECT id, event_type, received_at, verification_status, processed_at, process_error FROM webhook_events ORDER BY received_at DESC LIMIT 12")
-      .all(),
+    recent_paypal_calls: db().prepare("SELECT * FROM paypal_calls WHERE user_id = ? ORDER BY id DESC LIMIT 12").all(userId),
+    recent_webhooks: operator
+      ? db().prepare("SELECT id, event_type, received_at, verification_status, processed_at, process_error FROM webhook_events ORDER BY received_at DESC LIMIT 12").all()
+      : [],
   });
 });
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, time: now(), brand: config.BRAND_NAME, features, paypal_env: config.PAYPAL_ENV, public_base_url: config.PUBLIC_BASE_URL, dashboard_access: config.DASHBOARD_ACCESS });
+});
+
+// ---------- Sign in with GitHub ----------
+app.get("/api/auth/me", (req, res) => {
+  const user = currentUser(req);
+  res.json({
+    user: user && { login: user.login, name: user.name, avatar_url: user.avatar_url, role: user.id === LOCAL_USER ? "operator" : "member" },
+    github_login_available: githubLoginAvailable(),
+  });
+});
+
+app.get("/api/auth/github/start", (_req, res) => {
+  try {
+    res.redirect(startGithubLogin(res));
+  } catch (e) {
+    res.redirect(`/?auth_error=${encodeURIComponent((e as Error).message)}`);
+  }
+});
+
+app.get("/api/auth/github/callback", async (req, res) => {
+  try {
+    await finishGithubLogin(req, res);
+    res.redirect("/dashboard");
+  } catch (e) {
+    res.redirect(`/?auth_error=${encodeURIComponent((e as Error).message)}`);
+  }
+});
+
+app.post("/api/auth/logout", (_req, res) => {
+  signOut(res);
+  res.json({ ok: true });
+});
+
+// What this person's coding agent connects with. Only they can see it.
+app.get("/api/me/connect", requireMember, (req, res) => {
+  const userId = scope(req);
+  res.json({ server_url: config.PUBLIC_BASE_URL, token: ingestTokenFor(userId), can_rotate: userId !== LOCAL_USER });
+});
+
+app.post("/api/me/connect/rotate", requireMember, (req, res) => {
+  res.json({ server_url: config.PUBLIC_BASE_URL, token: rotateIngestToken(scope(req)), can_rotate: true });
 });
 
 // Web app manifest, named from BRAND_NAME. Icons are rendered by `npm run icons` from one vector mark.
@@ -171,21 +259,21 @@ app.get("/api/manifest.webmanifest", (_req, res) => {
   });
 });
 
-app.post("/api/setup/paypal", requireAdmin, async (_req, res) => {
+app.post("/api/setup/paypal", requireOperator, async (_req, res) => {
   const plan = await ensureProductAndPlan();
   const hook = await ensureWebhook();
   res.json({ plan, webhook: hook });
 });
 
 // ---------- Sessions & evidence ----------
-app.get("/api/sessions", sessionRead, (_req, res) => {
+app.get("/api/sessions", sessionRead, (req, res) => {
   const rows = db()
     .prepare(
       `SELECT s.*, (SELECT COUNT(*) FROM evidence e WHERE e.session_id = s.id) AS evidence_count,
               (SELECT COUNT(*) FROM hook_events h WHERE h.session_id = s.id) AS event_count
-       FROM sessions s ORDER BY s.last_event_at DESC LIMIT 500`,
+       FROM sessions s WHERE s.user_id = ? ORDER BY s.last_event_at DESC LIMIT 500`,
     )
-    .all() as any[];
+    .all(scope(req)) as any[];
   res.json(
     rows.map((r) => {
       const run = activeRun(r.id);
@@ -207,7 +295,7 @@ app.get("/api/sessions", sessionRead, (_req, res) => {
   );
 });
 
-app.get("/api/sessions/:id", sessionRead, async (req, res) => {
+app.get("/api/sessions/:id", sessionRead, ownSession, async (req, res) => {
   const id = String(req.params.id);
   const session = db().prepare("SELECT * FROM sessions WHERE id = ?").get(id) as any;
   if (!session) return res.status(404).json({ error: "Unknown session" });
@@ -225,14 +313,14 @@ app.get("/api/sessions/:id", sessionRead, async (req, res) => {
   });
 });
 
-app.get("/api/sessions/:id/credits", sessionRead, (req, res) => {
+app.get("/api/sessions/:id/credits", sessionRead, ownSession, (req, res) => {
   const c = sessionCredits(String(req.params.id));
   if (!c) return res.status(404).json({ error: "This session has no attribution yet." });
   res.json(c);
 });
 
 // Raw payloads carry the developer's own code (file heads, Edit diffs) and commands: admin only, even when the dashboard is public.
-app.get("/api/sessions/:id/events/:eventId", requireAdmin, (req, res) => {
+app.get("/api/sessions/:id/events/:eventId", requireMember, ownSession, (req, res) => {
   const row = db()
     .prepare("SELECT * FROM hook_events WHERE session_id = ? AND id = ?")
     .get(String(req.params.id), Number(req.params.eventId)) as any;
@@ -240,16 +328,22 @@ app.get("/api/sessions/:id/events/:eventId", requireAdmin, (req, res) => {
   res.json({ ...row, payload: json(row.payload_json, null), payload_json: undefined });
 });
 
-app.post("/api/sessions/:id/close", requireAdmin, (req, res) => {
+app.post("/api/sessions/:id/close", requireMember, ownSession, (req, res) => {
   db().prepare("UPDATE sessions SET status = 'closed', ended_at = COALESCE(ended_at, ?), end_reason = COALESCE(end_reason, 'closed_in_dashboard') WHERE id = ? AND status = 'open'").run(now(), String(req.params.id));
   res.json({ ok: true });
 });
 
-app.post("/api/sessions/:id/attribute", requireAdmin, async (req, res) => {
+app.post("/api/sessions/:id/attribute", requireMember, ownSession, async (req, res) => {
+  const w = who(req)!;
+  if (!w.operator && features.llm) {
+    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const used = Number((db().prepare("SELECT COUNT(*) AS n FROM attribution_runs r JOIN sessions s ON s.id = r.session_id WHERE s.user_id = ? AND r.method = 'llm' AND r.created_at > ?").get(w.userId, since) as { n: number }).n);
+    if (used >= config.POLICY_MAX_REVIEWS_PER_DAY) return res.status(429).json({ error: `You've used today's ${config.POLICY_MAX_REVIEWS_PER_DAY} AI reviews. Try again tomorrow.` });
+  }
   res.json(await attributeSession(String(req.params.id)));
 });
 
-app.post("/api/sessions/:id/active-run", requireAdmin, (req, res) => {
+app.post("/api/sessions/:id/active-run", requireMember, ownSession, (req, res) => {
   const runId = String(req.body?.run_id ?? "");
   const run = runsForSession(String(req.params.id)).find((r) => r.id === runId);
   if (!run) return res.status(404).json({ error: "Unknown run" });
@@ -259,7 +353,7 @@ app.post("/api/sessions/:id/active-run", requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
-app.put("/api/sessions/:id/labels", requireAdmin, (req, res) => {
+app.put("/api/sessions/:id/labels", requireMember, ownSession, (req, res) => {
   const sid = String(req.params.id);
   const labels = (req.body?.labels ?? []) as { ecosystem: string; package: string; label: string; weight?: number | null }[];
   const bad = labels.find((l) => !LABELS.has(l.label));
@@ -268,11 +362,12 @@ app.put("/api/sessions/:id/labels", requireAdmin, (req, res) => {
   res.json({ ok: true, count: labels.length, blind: labelsAreBlind(sid) });
 });
 
-app.get("/api/eval", operatorRead, (_req, res) => res.json(evalReport()));
+app.get("/api/eval", memberRead, (req, res) => res.json(evalReport(scope(req))));
 
 // ---------- Packages & maintainers ----------
-app.get("/api/packages", operatorRead, (_req, res) => {
-  const rows = db().prepare("SELECT ecosystem, name FROM packages ORDER BY name").all() as { ecosystem: Ecosystem; name: string }[];
+app.get("/api/packages", memberRead, (req, res) => {
+  const userId = scope(req);
+  const rows = packagesForUser(userId) as { ecosystem: Ecosystem; name: string }[];
   const currency = config.TITHE_CURRENCY;
   res.json(
     rows.map((r) => {
@@ -281,9 +376,9 @@ app.get("/api/packages", operatorRead, (_req, res) => {
       const sums = p.repo
         ? (db()
             .prepare(
-              "SELECT status, COALESCE(SUM(amount_minor),0) AS t FROM allocations WHERE repo = ? AND currency = ? AND status IN ('reserved','in_batch','paid') GROUP BY status",
+              "SELECT status, COALESCE(SUM(amount_minor),0) AS t FROM allocations WHERE repo = ? AND currency = ? AND user_id = ? AND status IN ('reserved','in_batch','paid') GROUP BY status",
             )
-            .all(p.repo, currency) as { status: string; t: number }[])
+            .all(p.repo, currency, userId) as { status: string; t: number }[])
         : [];
       const s = (k: string) => fromMinor(Number(sums.find((x) => x.status === k)?.t ?? 0), currency);
       return {
@@ -300,14 +395,14 @@ app.get("/api/packages", operatorRead, (_req, res) => {
   );
 });
 
-app.post("/api/packages/refresh", requireAdmin, async (req, res) => {
-  const items = (req.body?.items ?? []) as { ecosystem: Ecosystem; name: string }[];
-  const list = items.length ? items : (db().prepare("SELECT ecosystem, name FROM packages").all() as any[]);
+app.post("/api/packages/refresh", requireMember, async (req, res) => {
+  // Limited to this person's own packages, so nobody can drive unbounded registry lookups.
+  const list = packagesForUser(scope(req)) as { ecosystem: Ecosystem; name: string }[];
   res.json({ refreshed: (await resolveMany(list, true)).length });
 });
 
 // ---------- Claims ----------
-app.get("/api/claims", operatorRead, (_req, res) => {
+app.get("/api/claims", requireOperator, (_req, res) => {
   res.json(
     listClaims().map((c) => ({
       ...c,
@@ -408,32 +503,34 @@ app.get("/api/badge/:owner/:name", (req, res) => {
   res.send(badgeSvg(repo ? repoSummary(repo) : undefined));
 });
 
-app.get("/api/trail", operatorRead, (req, res) => {
+app.get("/api/trail", memberRead, (req, res) => {
   const repo = normalizeRepo(String(req.query.repo ?? "").replace(/^(?!https?:)/, "https://"));
   if (!repo) return res.status(400).json({ error: "Pass ?repo=github.com/owner/name" });
-  res.json(moneyTrail(repo));
+  res.json(moneyTrail(repo, scope(req)));
 });
 
 // ---------- Funding (PayPal Subscriptions) ----------
-app.get("/api/funding", operatorRead, (_req, res) => {
+app.get("/api/funding", memberRead, (req, res) => {
+  const userId = scope(req);
+  const allowance = agentAllowance(userId);
   res.json({
-    subscription: currentSubscription() ?? null,
+    subscription: currentSubscription(userId) ?? null,
     plan_id: activePlanId() ?? null,
     product_id: getSetting("paypal.product_id") ?? null,
     tithe: { amount: config.TITHE_AMOUNT, currency: config.TITHE_CURRENCY, interval: config.TITHE_INTERVAL_UNIT },
-    pool: poolSummary(config.TITHE_CURRENCY),
-    topups: listTopups().map((t) => ({ ...t, approve_url: t.status === "CREATED" || t.status === "PAYER_ACTION_REQUIRED" ? t.approve_url : null, amount: fromMinor(t.amount_minor, t.currency) })),
+    pool: poolSummary(config.TITHE_CURRENCY, userId),
+    topups: listTopups(userId).map((t) => ({ ...t, approve_url: t.status === "CREATED" || t.status === "PAYER_ACTION_REQUIRED" ? t.approve_url : null, amount: fromMinor(t.amount_minor, t.currency) })),
     topup_policy: {
       max: config.POLICY_MAX_TOPUP ?? null,
-      agent: agentAllowance() && { ...agentAllowance()!, cap: fromMinor(agentAllowance()!.cap_minor, config.TITHE_CURRENCY), left: fromMinor(agentAllowance()!.left_minor, config.TITHE_CURRENCY) },
+      agent: allowance && { ...allowance, cap: fromMinor(allowance.cap_minor, config.TITHE_CURRENCY), left: fromMinor(allowance.left_minor, config.TITHE_CURRENCY) },
     },
   });
 });
 
 // ---------- One-time top-ups (PayPal Orders v2) ----------
-app.post("/api/funding/topup", requireAdmin, async (req, res) => {
+app.post("/api/funding/topup", requireMember, requireTestModeUnlessOperator, async (req, res) => {
   const source = req.body?.source === "agent" ? "agent" : "dashboard";
-  const t = await startTopup({ amount: String(req.body?.amount ?? ""), source, note: req.body?.note ? String(req.body.note) : undefined });
+  const t = await startTopup({ userId: scope(req), amount: String(req.body?.amount ?? ""), source, note: req.body?.note ? String(req.body.note) : undefined });
   res.json({ id: t.id, order_id: t.order_id, approveUrl: t.approve_url, amount: fromMinor(t.amount_minor, t.currency), currency: t.currency, source: t.source });
 });
 
@@ -448,13 +545,13 @@ app.get("/api/funding/topup/return", async (req, res) => {
   }
 });
 
-app.post("/api/funding/topup/:id/sync", requireAdmin, async (req, res) => {
+app.post("/api/funding/topup/:id/sync", requireMember, ownTopup, async (req, res) => {
   const t = await syncTopup(String(req.params.id));
   res.json({ ...t, approve_url: undefined, amount: fromMinor(t.amount_minor, t.currency) });
 });
 
-app.post("/api/funding/subscribe", requireAdmin, async (_req, res) => {
-  const { id, approveUrl } = await createSubscription();
+app.post("/api/funding/subscribe", requireMember, requireTestModeUnlessOperator, async (req, res) => {
+  const { id, approveUrl } = await startSubscription(scope(req));
   res.json({ id, approveUrl });
 });
 
@@ -469,8 +566,8 @@ app.get("/api/funding/return", async (req, res) => {
   }
 });
 
-app.post("/api/funding/sync", requireAdmin, async (_req, res) => {
-  const sub = currentSubscription();
+app.post("/api/funding/sync", requireMember, async (req, res) => {
+  const sub = currentSubscription(scope(req));
   if (!sub) return res.status(400).json({ error: "No subscription yet." });
   res.json(await syncSubscription(sub.id));
 });
@@ -505,55 +602,56 @@ function settlementView(id: string) {
   };
 }
 
-app.get("/api/settlements", operatorRead, (_req, res) => {
-  const rows = db().prepare("SELECT id FROM settlements WHERE status != 'empty' ORDER BY created_at DESC").all() as { id: string }[];
+app.get("/api/settlements", memberRead, (req, res) => {
+  const rows = db().prepare("SELECT id FROM settlements WHERE user_id = ? AND status != 'empty' ORDER BY created_at DESC").all(scope(req)) as { id: string }[];
   res.json(rows.map((r) => settlementView(r.id)));
 });
-app.get("/api/settlements/:id", operatorRead, (req, res) => {
+app.get("/api/settlements/:id", memberRead, ownSettlement, (req, res) => {
   const v = settlementView(String(req.params.id));
   if (!v) return res.status(404).json({ error: "Unknown settlement" });
   res.json(v);
 });
-app.post("/api/settlements/plan", requireAdmin, (_req, res) => {
-  const { settlementId } = planSettlement();
+app.post("/api/settlements/plan", requireMember, requireTestModeUnlessOperator, (req, res) => {
+  const { settlementId } = planSettlement(scope(req));
   res.json(settlementView(settlementId));
 });
-app.post("/api/settlements/discard-drafts", requireAdmin, (_req, res) => {
-  discardDrafts();
+app.post("/api/settlements/discard-drafts", requireMember, (req, res) => {
+  discardDrafts(scope(req));
   res.json({ ok: true });
 });
-app.post("/api/settlements/:id/approve", requireAdmin, (req, res) => {
+app.post("/api/settlements/:id/approve", requireMember, ownSettlement, (req, res) => {
   approveSettlement(String(req.params.id));
   res.json(settlementView(String(req.params.id)));
 });
-app.post("/api/settlements/:id/execute", requireAdmin, async (req, res) => {
+app.post("/api/settlements/:id/execute", requireMember, ownSettlement, async (req, res) => {
   const result = await executeSettlement(String(req.params.id));
   res.json({ result, settlement: settlementView(String(req.params.id)) });
 });
-app.post("/api/settlements/:id/sync", requireAdmin, async (req, res) => {
+app.post("/api/settlements/:id/sync", requireMember, ownSettlement, async (req, res) => {
   const result = await syncSettlement(String(req.params.id));
   res.json({ result, settlement: settlementView(String(req.params.id)) });
 });
-app.post("/api/settlements/:id/replay", requireAdmin, async (req, res) => {
+app.post("/api/settlements/:id/replay", requireMember, ownSettlement, async (req, res) => {
   res.json(await replaySettlement(String(req.params.id)));
 });
-app.post("/api/payout-items/:senderItemId/cancel", requireAdmin, async (req, res) => {
+app.post("/api/payout-items/:senderItemId/cancel", requireMember, ownPayoutItem, async (req, res) => {
   res.json(await cancelUnclaimed(String(req.params.senderItemId), { manual: true }));
 });
-app.post("/api/jobs/housekeeping", requireAdmin, async (_req, res) => {
+app.post("/api/jobs/housekeeping", requireOperator, async (_req, res) => {
   res.json(await housekeeping());
 });
 
 // ---------- Self-audit ----------
-app.get("/api/audit", operatorRead, (_req, res) => res.json(auditReport()));
+app.get("/api/audit", memberRead, (req, res) => res.json(auditReport(scope(req))));
 
 // ---------- Ledger ----------
-app.get("/api/ledger", operatorRead, (_req, res) => {
+app.get("/api/ledger", memberRead, (req, res) => {
   const currency = config.TITHE_CURRENCY;
+  const userId = scope(req);
   res.json({
-    summary: poolSummary(currency),
-    entries: (ledgerEntries() as any[]).map((e) => ({ ...e, amount: fromMinor(e.amount_minor, e.currency) })),
-    paypal_calls: db().prepare("SELECT * FROM paypal_calls ORDER BY id DESC LIMIT 200").all(),
+    summary: poolSummary(currency, userId),
+    entries: (ledgerEntries(userId) as any[]).map((e) => ({ ...e, amount: fromMinor(e.amount_minor, e.currency) })),
+    paypal_calls: db().prepare("SELECT * FROM paypal_calls WHERE user_id = ? ORDER BY id DESC LIMIT 200").all(userId),
   });
 });
 
@@ -583,7 +681,12 @@ if (fs.existsSync(webDist)) {
   app.get(/^(?!\/api\/).*/, (_req, res) => res.type("html").send(page));
 }
 
-app.listen(config.PORT, () => {
+app.listen(config.PORT, (err?: Error) => {
+  // Express hands a failed listen (such as a busy port) to this callback; without this the server would claim to be up and then exit.
+  if (err) {
+    console.error(`Could not start on port ${config.PORT}: ${err.message}`);
+    process.exit(1);
+  }
   console.log(`Upstream server on http://localhost:${config.PORT} (public: ${config.PUBLIC_BASE_URL}, PayPal ${config.PAYPAL_ENV})`);
   const missing = Object.entries(features).filter(([, v]) => !v).map(([k]) => k);
   if (missing.length) console.log(`Disabled until configured: ${missing.join(", ")}`);

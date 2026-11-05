@@ -19,9 +19,9 @@ export function Settlements() {
   return (
     <div className="page">
       <PageHead
-        eyebrow="Step 4 · Money out"
-        title="Payouts"
-        subtitle={`Each run becomes one PayPal Payouts batch with a fixed sender_batch_id. ${brand} proposes it, code enforces the budget, caps and verified receivers, and you approve it.`}
+        eyebrow="Step 4"
+        title="Pay maintainers"
+        subtitle={`${brand} works out who gets what and checks it against your budget and rules. You approve, then PayPal sends the money.`}
         actions={
           <ActionButton
             className="btn primary"
@@ -39,7 +39,7 @@ export function Settlements() {
       {error && <ErrorBox error={error} />}
       {loading && !data ? <Loading /> : !data?.length ? (
         <Card>
-          <Empty icon={<Send size={22} />} title="No payouts yet" action={<Link className="btn" to="/sessions"><TerminalSquare size={15} />Attribute a session</Link>}>
+          <Empty icon={<Send size={22} />} title="No payouts yet" action={<Link className="btn" to="/sessions"><TerminalSquare size={15} />Review a session</Link>}>
             Plan a payout once a session is attributed. Shares for repos whose maintainer hasn't verified yet are held, never paid to an unverified address.
           </Empty>
         </Card>
@@ -163,7 +163,7 @@ export function SettlementDetail() {
       <Link to="/settlements" className="back-link"><ArrowLeft size={14} />All payouts</Link>
       <PageHead
         title={<span className="row" style={{ gap: 10 }}>Payout {dateTime(s.created_at)} <Status value={s.status} /></span>}
-        subtitle={<>sender_batch_id <code>{s.sender_batch_id}</code>{s.payout_batch_id && <> · PayPal batch <code>{s.payout_batch_id}</code></>}</>}
+        subtitle={<>Reference <code>{s.sender_batch_id}</code>{s.payout_batch_id && <> · PayPal batch <code>{s.payout_batch_id}</code></>}</>}
         actions={
           <>
             {s.status === "draft" && (

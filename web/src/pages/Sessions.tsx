@@ -10,7 +10,7 @@ import { Grid } from "../data.tsx";
 const FILTERS = [
   { v: "all", label: "All" },
   { v: "todo", label: "Needs attribution" },
-  { v: "attributed", label: "Attributed" },
+  { v: "attributed", label: "Reviewed" },
   { v: "open", label: "Live" },
 ] as const;
 
@@ -40,7 +40,7 @@ export function Sessions() {
     { headerName: "Tool events", field: "event_count", maxWidth: 120, type: "numericColumn" },
     { headerName: "Evidence", field: "evidence_count", maxWidth: 110, type: "numericColumn" },
     {
-      headerName: "Attributed to",
+      headerName: "Credited packages",
       field: "top",
       flex: 2,
       minWidth: 280,
@@ -57,16 +57,16 @@ export function Sessions() {
   return (
     <div className="page">
       <PageHead
-        eyebrow="Step 2 · Evidence"
-        title="Agent sessions"
-        subtitle="One row per Claude Code session. Evidence comes from hooks on every tool call: installs, imports written, APIs used, library source read, docs fetched."
+        eyebrow="Step 2"
+        title="Coding sessions"
+        subtitle="Each row is one Claude Code session, showing what the agent actually did: packages installed, code written with them, library source read and docs opened."
         actions={<span className="muted small">{updatedAt ? `Updated ${ago(new Date(updatedAt).toISOString())} · live` : ""}</span>}
       />
       {error && <ErrorBox error={error} />}
       {loading && !data ? <Loading rows={1} /> : !data?.length ? (
         <Card>
           <Empty icon={<TerminalSquare size={22} />} title="No sessions yet" action={<Link className="btn primary" to="/connect"><PlugZap size={15} />Connect your agent</Link>}>
-            Install the Claude Code hook in a project, then code as usual. Sessions appear here while they run.
+            Connect Claude Code to a project, then code as usual. Sessions appear here while they run.
           </Empty>
         </Card>
       ) : (

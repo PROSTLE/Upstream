@@ -32,13 +32,13 @@ function repoPackages(repo: string) {
   return db().prepare("SELECT ecosystem, name FROM packages WHERE repo = ? ORDER BY name").all(repo) as { ecosystem: string; name: string }[];
 }
 
-/** Attributed sessions whose active run gives a positive weight to one of these packages. */
-function reliedSessions(pkgs: { ecosystem: string; name: string }[]) {
+/** Attributed sessions whose active run gives a positive weight to one of these packages. Public counts use everyone's; a trail uses one person's. */
+function reliedSessions(pkgs: { ecosystem: string; name: string }[], userId?: string) {
   const keys = new Set(pkgs.map((p) => `${p.ecosystem}:${p.name}`));
   if (!keys.size) return [];
   const sessions = db()
-    .prepare("SELECT id, started_at, last_event_at FROM sessions WHERE status = 'attributed' ORDER BY started_at")
-    .all() as { id: string; started_at: string; last_event_at: string }[];
+    .prepare(`SELECT id, started_at, last_event_at FROM sessions WHERE status = 'attributed'${userId ? " AND user_id = ?" : ""} ORDER BY started_at`)
+    .all(...(userId ? [userId] : [])) as { id: string; started_at: string; last_event_at: string }[];
   const out: { id: string; last_event_at: string; weights: ReturnType<typeof weightsFor> }[] = [];
   for (const s of sessions) {
     const w = weightsFor(s.id, keys);
@@ -129,14 +129,25 @@ export function reposWithMoney(limit = 50): RepoSummary[] {
     .slice(0, limit);
 }
 
-/** Every allocation for a repo, joined to the sessions and the cited evidence that produced it. */
-export function moneyTrail(repo: string) {
+/** The packages in this person's reviewed sessions and payouts: nobody sees what other people's agents used. */
+export function packagesForUser(userId: string): { ecosystem: string; name: string }[] {
+  const seen = new Map<string, { ecosystem: string; name: string }>();
+  const add = (ecosystem: string, name: string) => seen.set(`${ecosystem}:${name}`, { ecosystem, name });
+  const runs = db().prepare("SELECT r.candidates_json FROM attribution_runs r JOIN sessions s ON s.id = r.session_id WHERE s.user_id = ?").all(userId) as { candidates_json: string }[];
+  for (const r of runs) for (const c of json<{ candidates?: { ecosystem: string; name: string }[] }>(r.candidates_json, {}).candidates ?? []) add(c.ecosystem, c.name);
+  for (const a of db().prepare("SELECT DISTINCT ecosystem, package FROM allocations WHERE user_id = ?").all(userId) as { ecosystem: string; package: string }[]) add(a.ecosystem, a.package);
+  const known = db().prepare("SELECT 1 FROM packages WHERE ecosystem = ? AND name = ?");
+  return [...seen.values()].filter((p) => known.get(p.ecosystem, p.name)).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** One person's allocations for a repo, joined to their sessions and the cited evidence that produced them. */
+export function moneyTrail(repo: string, userId: string) {
   const currency = config.TITHE_CURRENCY;
   const packages = repoPackages(repo);
   const keys = new Set(packages.map((p) => `${p.ecosystem}:${p.name}`));
   const allocations = (db()
-    .prepare("SELECT * FROM allocations WHERE repo = ? AND status != 'planned' ORDER BY created_at DESC")
-    .all(repo) as any[]).map((a) => ({
+    .prepare("SELECT * FROM allocations WHERE repo = ? AND user_id = ? AND status != 'planned' ORDER BY created_at DESC")
+    .all(repo, userId) as any[]).map((a) => ({
     id: a.id,
     settlement_id: a.settlement_id,
     package: `${a.ecosystem}:${a.package}`,
@@ -148,7 +159,7 @@ export function moneyTrail(repo: string) {
     session_ids: json<string[]>(a.session_ids_json, []),
   }));
   const sessionIds = new Set(allocations.flatMap((a) => a.session_ids));
-  for (const s of reliedSessions(packages)) sessionIds.add(s.id);
+  for (const s of reliedSessions(packages, userId)) sessionIds.add(s.id);
   const sessions = [...sessionIds].map((id) => {
     const row = db().prepare("SELECT id, project, started_at FROM sessions WHERE id = ?").get(id) as
       | { id: string; project: string | null; started_at: string }
@@ -156,8 +167,8 @@ export function moneyTrail(repo: string) {
     return { id, project: row?.project ?? null, started_at: row?.started_at ?? null, weights: weightsFor(id, keys) };
   });
   const items = (db()
-    .prepare("SELECT sender_item_id, settlement_id, amount_minor, currency, transaction_status, fee_minor, updated_at FROM payout_items WHERE repo = ? ORDER BY updated_at DESC")
-    .all(repo) as any[]).map((i) => ({
+    .prepare("SELECT p.sender_item_id, p.settlement_id, p.amount_minor, p.currency, p.transaction_status, p.fee_minor, p.updated_at FROM payout_items p JOIN settlements s ON s.id = p.settlement_id WHERE p.repo = ? AND s.user_id = ? ORDER BY p.updated_at DESC")
+    .all(repo, userId) as any[]).map((i) => ({
     sender_item_id: i.sender_item_id,
     settlement_id: i.settlement_id,
     amount: fromMinor(i.amount_minor, i.currency),

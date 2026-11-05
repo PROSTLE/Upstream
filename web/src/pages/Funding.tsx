@@ -31,9 +31,9 @@ export function Funding() {
   return (
     <div className="page">
       <PageHead
-        eyebrow="Step 1 · Money in"
-        title="Funding"
-        subtitle={`A fixed "agent tithe" you approve once with PayPal Subscriptions, or a one-time top-up with PayPal Orders. ${brand} never charges more than you approved, and only distributes money PayPal has confirmed.`}
+        eyebrow="Step 1"
+        title="Add funds"
+        subtitle={`Set a monthly budget for the open-source projects your AI agent relies on, or add money once. You approve on PayPal's own page, and ${brand} only uses money PayPal has confirmed.`}
       />
       {params.get("subscribed") && (
         <div className="callout green"><CheckCircle2 size={18} color="var(--green)" /><div>PayPal returned subscription <code>{params.get("subscribed")}</code> with status <strong>{params.get("status")}</strong>. Payments appear in the pool once PayPal reports them.</div></div>
@@ -52,7 +52,7 @@ export function Funding() {
       </div>
 
       <div className="split">
-        <Card title="Agent tithe" sub="PayPal Subscriptions API" icon={<Repeat size={17} />}>
+        <Card title="Monthly budget" sub="Billed through PayPal Subscriptions" icon={<Repeat size={17} />}>
           <div className="row" style={{ alignItems: "baseline", gap: 6 }}>
             <span className="stat-value">{moneyStr(data.tithe.amount, cur)}</span>
             <span className="muted">per {data.tithe.interval.toLowerCase()}</span>
@@ -105,7 +105,7 @@ export function Funding() {
           tone="teal"
           actions={<Link className="btn ghost sm" to="/audit">Live audit</Link>}
         >
-          <DesignNote label="Money in is read from PayPal, not assumed" detail="Subscription transactions (gross, fee) are pulled from /v1/billing/subscriptions/{id}/transactions and top-ups from the captured order; webhooks only trigger that read, so nothing is booked twice." />
+          <DesignNote label="Money in is read from PayPal, not assumed" detail="Payments and fees come straight from PayPal's records, so nothing is counted twice." />
           <DesignNote label="PayPal's fees are shown, not hidden" detail="Funding fees and per-item payout fees are booked from the amounts PayPal reports." />
           <DesignNote label="Full refunds leave the pool" detail="Refund webhooks and an hourly job re-read PayPal, so refunded money stops counting as available. Partial subscription refunds are not broken out by PayPal's transaction list and are not booked automatically." />
           <DesignNote label="Unclaimed money doesn't leak" detail="Allocations for repos without a verified maintainer are held, then released back to the pool." />

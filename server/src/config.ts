@@ -57,6 +57,8 @@ const schema = z.object({
   POLICY_MAX_AGENT_TOPUP: optional.pipe(decimalString.optional()),
 
   MODEL_API_KEY: optional,
+  // The server pays for AI reviews, so each person other than the operator gets this many per 24 hours.
+  POLICY_MAX_REVIEWS_PER_DAY: z.coerce.number().int().positive().default(20),
   MODEL_API_BASE: z.string().url(),
   UPSTREAM_MODEL: z.string().min(1),
   UPSTREAM_EFFORT: z.enum(["low", "medium", "high", "xhigh"]),
@@ -64,6 +66,8 @@ const schema = z.object({
   GITHUB_CLIENT_ID: optional,
   GITHUB_CLIENT_SECRET: optional,
   GITHUB_TOKEN: optional,
+  // Comma-separated GitHub logins that may run the dashboard after Sign in with GitHub. Anyone else is a visitor.
+  OPERATOR_GITHUB_LOGINS: optional,
   // "true" once Log in with PayPal is switched on for the PayPal app (Apps & Credentials > Other features).
   PAYPAL_LOGIN_ENABLED: optional,
 

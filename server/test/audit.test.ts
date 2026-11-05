@@ -33,7 +33,7 @@ function fakePayPal(): typeof fetch {
   }) as typeof fetch;
 }
 
-const byId = (id: string) => auditReport().checks.find((c) => c.id === id)!;
+const byId = (id: string) => auditReport("local").checks.find((c) => c.id === id)!;
 
 before(async () => {
   setDbForTests(openDb(":memory:"));
@@ -41,8 +41,8 @@ before(async () => {
   const d = db();
   const earlier = new Date(Date.now() - 3600_000).toISOString();
   d.prepare("INSERT INTO subscriptions(id, plan_id, status, created_at, updated_at) VALUES ('I-SUB1','P-1','ACTIVE',?,?)").run(now(), now());
-  book({ dedupeKey: "fund:T1", kind: "FUNDING_GROSS", amountMinor: 1000, currency: "USD", refType: "subscription", refId: "I-SUB1", source: "api_sync" });
-  book({ dedupeKey: "fundfee:T1", kind: "FUNDING_FEE", amountMinor: -79, currency: "USD", refType: "subscription", refId: "I-SUB1", source: "api_sync" });
+  book({ dedupeKey: "fund:T1", kind: "FUNDING_GROSS", amountMinor: 1000, currency: "USD", refType: "subscription", refId: "I-SUB1", source: "api_sync", userId: "local" });
+  book({ dedupeKey: "fundfee:T1", kind: "FUNDING_FEE", amountMinor: -79, currency: "USD", refType: "subscription", refId: "I-SUB1", source: "api_sync", userId: "local" });
   d.prepare("INSERT INTO sessions(id, started_at, last_event_at, status) VALUES ('s1', ?, ?, 'attributed')").run(now(), now());
   for (const [n, pkg] of [[1, "zod"], [2, "dayjs"]] as const) {
     d.prepare("INSERT INTO hook_events(id, session_id, dedupe_key, hook_event_name, received_at, payload_json) VALUES (?, 's1', ?, 'PostToolUse', ?, '{}')").run(n, `k${n}`, now());
@@ -70,14 +70,14 @@ before(async () => {
   d.prepare("INSERT INTO attribution_runs(id, session_id, created_at, method, candidates_json, validated_json, flags_json, is_active) VALUES ('r1','s1',?,'llm',?,?,'[]',1)")
     .run(now(), JSON.stringify(candidates), JSON.stringify(validated));
 
-  const { settlementId } = s.planSettlement();
+  const { settlementId } = s.planSettlement("local");
   s.approveSettlement(settlementId);
   await s.executeSettlement(settlementId);
   await s.syncSettlement(settlementId);
 });
 
 test("an untouched payout run passes every check that has records, and says when there's nothing to check", () => {
-  const r = auditReport();
+  const r = auditReport("local");
   assert.deepEqual(r.checks.filter((c) => c.status === "fail").map((c) => `${c.id}: ${c.failures.join("; ")}`), []);
   for (const id of ["ledger_traces_to_paypal", "pool_not_overcommitted", "payouts_to_verified_maintainers", "items_equal_allocations", "ledger_matches_payout_status", "payout_caps_respected", "paid_weights_cite_evidence", "allocations_trace_to_sessions"]) {
     assert.equal(byId(id).status, "pass", id);
@@ -90,17 +90,17 @@ test("an untouched payout run passes every check that has records, and says when
 
 test("a refund that leaves held money uncovered is flagged, and held money can't be paid out of it", () => {
   // The run reserved 3.61 for dayjs. A 1.00 refund drops the balance to 2.70: the hold is no longer covered.
-  book({ dedupeKey: "fundrefund:T1", kind: "FUNDING_GROSS", amountMinor: -100, currency: "USD", refType: "subscription", refId: "I-SUB1", source: "api_sync" });
+  book({ dedupeKey: "fundrefund:T1", kind: "FUNDING_GROSS", amountMinor: -100, currency: "USD", refType: "subscription", refId: "I-SUB1", source: "api_sync", userId: "local" });
   const pool = byId("pool_not_overcommitted");
   assert.equal(pool.status, "fail");
   assert.match(pool.failures[0], /exceeds the PayPal-confirmed balance/);
   // dayjs's maintainer verifies: the next plan would pay the held 3.61, which the pool no longer has.
   db().prepare("INSERT INTO claims(id, repo, method, paypal_receiver, status, evidence_json, created_at, verified_at) VALUES ('c2','github.com/iamkun/dayjs','github_admin','d@example.com','verified','{\"permissions\":{\"admin\":true}}',?,?)").run(now(), now());
-  const { settlementId } = s.planSettlement();
+  const { settlementId } = s.planSettlement("local");
   const budget = (db().prepare("SELECT policy_json FROM settlements WHERE id = ?").get(settlementId) as { policy_json: string }).policy_json;
   assert.equal(JSON.parse(budget).checks.find((c: any) => c.id === "budget").ok, false);
   assert.throws(() => s.approveSettlement(settlementId), /Policy checks failed/);
-  s.discardDrafts();
+  s.discardDrafts("local");
 });
 
 test("altering any stored record makes the matching check fail", () => {

@@ -27,35 +27,37 @@ export interface SetupStep {
 export function setupSteps(d: any): SetupStep[] {
   const f = d.features;
   const cur = d.pool.currency;
-  return [
+  // Server setup is the operator's job, so everyone else only sees the steps that are theirs to do.
+  const serverSteps = new Set(["paypal", "plan", "llm"]);
+  return ([
     {
-      id: "paypal", ok: f.paypal, label: "Add PayPal sandbox credentials",
-      detail: "PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET from developer.paypal.com → Apps & Credentials → Sandbox, in the server's .env.",
+      id: "paypal", ok: f.paypal, label: "Connect PayPal",
+      detail: f.paypal ? `Connected to PayPal ${d.environment === "sandbox" ? "test mode" : d.environment}` : "Add your PayPal app keys to the server's settings (.env).",
       command: "npm run doctor",
     },
     {
-      id: "plan", ok: Boolean(d.plan_id), label: "Create the funding plan in PayPal",
+      id: "plan", ok: Boolean(d.plan_id), label: "Create your budget plan",
       detail: d.plan_id ? `Plan ${d.plan_id}` : "Creates the catalog product, the billing plan and (on https) the webhook. Safe to re-run.",
       command: "npm run setup:paypal",
     },
     {
-      id: "fund", ok: d.subscription?.status === "ACTIVE" || d.pool.fundingGross > 0, label: "Fund the pool",
-      detail: d.subscription?.status === "ACTIVE" ? `Subscription ${d.subscription.id} is ACTIVE` : d.pool.fundingGross > 0 ? "The pool has PayPal-confirmed funds" : `Approve the ${moneyStr(d.tithe.amount, cur)} per ${d.tithe.interval.toLowerCase()} agent tithe once in PayPal, or add funds once. Cancel any time.`,
-      cta: { label: "Go to Funding", to: "/funding" },
+      id: "fund", ok: d.subscription?.status === "ACTIVE" || d.pool.fundingGross > 0, label: "Add funds",
+      detail: d.subscription?.status === "ACTIVE" ? "Your monthly budget is active" : d.pool.fundingGross > 0 ? "PayPal has confirmed your funds" : `Approve ${moneyStr(d.tithe.amount, cur)} per ${d.tithe.interval.toLowerCase()} once in PayPal, or add money once. Cancel any time.`,
+      cta: { label: "Add funds", to: "/funding" },
     },
     {
-      id: "connect", ok: d.counts.sessions > 0, label: "Connect Claude Code",
-      detail: d.counts.sessions ? `${plural(d.counts.sessions, "session")}, ${d.counts.evidence} evidence records` : "Install the hook in a project, then code as usual. Every tool call becomes evidence.",
-      cta: { label: "Install the hook", to: "/connect" },
+      id: "connect", ok: d.counts.sessions > 0, label: "Connect your coding agent",
+      detail: d.counts.sessions ? `${plural(d.counts.sessions, "session")} recorded` : "Run one command in your project, then code as usual. We record which packages the agent really uses.",
+      cta: { label: "Connect your agent", to: "/connect" },
     },
     {
-      id: "llm", ok: f.llm, label: "Turn on Muse Spark attribution",
+      id: "llm", ok: f.llm, label: "Turn on the AI review",
       detail: f.llm ? `Model ${d.model}` : "Set MODEL_API_KEY on the server. Without it, only the import-count baseline runs.",
       command: "npm run doctor",
     },
     {
-      id: "attribute", ok: d.counts.attributed > 0, label: "Attribute a session",
-      detail: d.counts.attributed ? `${plural(d.counts.attributed, "session")} attributed` : "Open a session, label it if you want a blind eval, then attribute it with Muse Spark.",
+      id: "attribute", ok: d.counts.attributed > 0, label: "Review a session with AI",
+      detail: d.counts.attributed ? `${plural(d.counts.attributed, "session")} reviewed` : "Open a session and let Muse Spark work out which packages mattered.",
       cta: { label: "Open sessions", to: "/sessions" },
     },
     {
@@ -64,9 +66,9 @@ export function setupSteps(d: any): SetupStep[] {
       cta: { label: "Open claim page", href: "/claim" },
     },
     {
-      id: "pay", ok: d.counts.settlements > 0, label: "Plan and send a payout",
-      detail: d.counts.settlements ? `${plural(d.counts.settlements, "payout run")}` : `${d.brand} proposes one PayPal Payouts batch; you review the policy checks and approve it.`,
-      cta: { label: "Go to Payouts", to: "/settlements" },
+      id: "pay", ok: d.counts.settlements > 0, label: "Pay maintainers",
+      detail: d.counts.settlements ? `${plural(d.counts.settlements, "payout run")}` : `${d.brand} proposes who gets what. You check it and approve, then PayPal sends the money.`,
+      cta: { label: "Pay maintainers", to: "/settlements" },
     },
-  ];
+  ] as SetupStep[]).filter((s) => d.viewer?.operator || !serverSteps.has(s.id));
 }

@@ -139,9 +139,9 @@ export function Packages() {
   return (
     <div className="page">
       <PageHead
-        eyebrow="Step 3 · Verified maintainers"
-        title="Packages & maintainers"
-        subtitle="Package → repo comes from deps.dev and ecosyste.ms; funding signals from registry metadata and FUNDING.yml. Money only goes to maintainers who prove they control the repo."
+        eyebrow="Step 3"
+        title="Maintainers"
+        subtitle="Every package your agent used, and who maintains it. Money only goes to maintainers who prove they run the repository."
         actions={
           <>
             <a className="btn" href="/claim" target="_blank" rel="noreferrer"><ShieldCheck size={16} />Open claim page</a>
@@ -161,7 +161,7 @@ export function Packages() {
       {error && <ErrorBox error={error} />}
       {rows.length > 0 && (
         <div className="grid-4">
-          <Stat label="Packages relied on" value={rows.length} icon={<Boxes size={15} />} foot={`${repos} source repositories`} />
+          <Stat label="Packages in your sessions" value={rows.length} icon={<Boxes size={15} />} foot={`${repos} source repositories`} />
           <Stat label="Verified maintainers" value={verified} tone="green" icon={<BadgeCheck size={15} />} foot="Proved admin/maintain access or a FUNDING.yml token" />
           <Stat label="Held for unclaimed repos" value={cur ? moneyStr(heldTotal.toFixed(6), cur) : "—"} tone="amber" icon={<Hourglass size={15} />} foot="Use Invite to send maintainers a claim link" />
           <Stat label="Repo not resolved" value={rows.filter((r) => !r.repo).length} tone="violet" icon={<ShieldQuestion size={15} />} foot="Can't be paid until a repo is found" />
@@ -178,7 +178,7 @@ export function Packages() {
       )}
       <Card>
         {loading && !data ? <Loading /> : !data?.length ? (
-          <Empty icon={<Boxes size={22} />} title="No packages yet" action={<Link className="btn" to="/sessions"><TerminalSquare size={15} />Attribute a session</Link>}>
+          <Empty icon={<Boxes size={22} />} title="No packages yet" action={<Link className="btn" to="/sessions"><TerminalSquare size={15} />Review a session</Link>}>
             Packages appear once a session is attributed. {brand} then resolves each one to its source repository and funding links.
           </Empty>
         ) : (

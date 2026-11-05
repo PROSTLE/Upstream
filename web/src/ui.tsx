@@ -119,7 +119,7 @@ export function Status({ value, label, live }: { value: string | null | undefine
   return (
     <span className={`pill ${STATUS[value] ?? ""}${live ? " live" : ""}`}>
       <span className="dot" />
-      {label ?? value.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase())}
+      {label ?? (value === "attributed" ? "Reviewed" : value.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase()))}
     </span>
   );
 }

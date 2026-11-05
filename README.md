@@ -122,7 +122,7 @@ Python import names are mapped to distributions (`yaml` → PyYAML, `PIL` → pi
 
 ## Trust: what you don't have to take on faith
 
-- **Private by default.** `DASHBOARD_ACCESS=private` (the default) means sessions, evidence, payouts, claims and the ledger need `ADMIN_TOKEN` even to read; the UI shows an unlock screen. `public` opens reads for a demo. Raw hook payloads (they contain your own code: Edit diffs, the first 8 KB of edited files) need `ADMIN_TOKEN` in both modes. The agent's MCP tools read session evidence back with the `INGEST_TOKEN` the hook already uses, and nothing else. Maintainer pages are always public. Covered by `server/test/access.test.ts`, which starts the real server and checks each route over HTTP.
+- **A private space for each person.** Anyone can sign in with GitHub and gets their own sessions, budget, money records, payouts, safety checks and agent token. Other people's records answer "not found", a person can only spend money they funded, and hourly reconciliation books each payment to its owner (`server/test/workspaces.test.ts` attacks this over HTTP). Packages and maintainer claims are shared, so a maintainer verifies once for everyone. Each person's AI reviews are capped per day because the server pays for them. Maintainer pages (`/claim`, `/r/owner/name`, the badge) are public, and `DASHBOARD_ACCESS=public` shows the operator's space to anyone as a read-only demo.
 - **Live audit** (`server/src/audit.ts`, `GET /api/audit`, *Live audit* page). Ten checks re-read the stored records on every request: every ledger entry points at a PayPal object; held plus in-flight money is covered by the PayPal-confirmed balance; every payout went to a maintainer verified before approval, with stored proof; each payout item equals its allocations to the cent; the ledger agrees with each item's PayPal status (sent, fee and return booked exactly once); items respect the caps recorded with their run; only signature-verified webhooks changed anything; every paid share cites evidence that exists in the evidence table; every allocation traces to sessions whose attribution pays that package; unfinished batches were re-read from PayPal in the last 2 hours. A check with nothing to examine reports *nothing to check yet*, never a pass, and the page says so plainly when the server hasn't called PayPal or Muse Spark yet. `server/test/audit.test.ts` runs a real payout through the settlement code, expects every check to pass, then alters one record at a time and expects the matching check to fail.
 - **Locked history.** Once a session is in a payout, its attribution can't be re-run or swapped, so the money trail can't be rewritten after the fact. A claim's `verified_at` records when ownership was first proven; a replaced or revoked claim can't come back.
 
@@ -184,7 +184,7 @@ node hook/install.mjs --url <PUBLIC_BASE_URL> --token <INGEST_TOKEN> --project /
 6. **Pay.** Payouts → *Plan payout* → review the policy checks → *Approve* → *Send with PayPal Payouts* → *Sync from PayPal*. Try *Replay batch* to see PayPal reject the duplicate `sender_batch_id`, and *Cancel* on an `UNCLAIMED` item (send to an email that has no sandbox account to produce one).
 7. **Reconcile.** The Ledger shows every PayPal-confirmed movement and the API audit log (request ids, debug ids). *Live audit* re-checks the records against the payout rules.
 
-The dashboard is private: unlock it with the `ADMIN_TOKEN` from the testing notes. The claim page and repo pages need no token.
+Sign in with GitHub to get your own private space, with your own agent token on the Connect page. `ADMIN_TOKEN` is only the operator's fallback for scripts and for servers without GitHub sign-in. The claim page and repo pages need no sign-in.
 
 ## Deploy on Render
 
@@ -193,7 +193,7 @@ The dashboard is private: unlock it with the `ADMIN_TOKEN` from the testing note
 ## Tests
 
 ```bash
-npm test          # 42 tests: parsers, evidence extraction, validator, money math, the hook script and its spool, public repo views and badge,
+npm test          # 57 tests: parsers, evidence extraction, validator, money math, the hook script and its spool, public repo views and badge,
                   # top-ups (capture, fees, refunds, retries, agent cap), Log in with PayPal, PR credits, the plugin manifest, an end-to-end settlement,
                   # claim and settlement state guards, the live audit (passes on real records, fails on altered ones), and HTTP access rules
 npm run doctor    # live, read-only checks against PayPal, Muse Spark, GitHub, deps.dev and ecosyste.ms (needs .env)
@@ -220,6 +220,8 @@ The settlement test drives plan → approve → execute twice (exactly one PayPa
 | Claude Code (as a coding assistant) | Used to help write this project. |
 
 ## Limitations (on purpose, in the open)
+
+- **All funds pass through one PayPal business account.** Each person's records are kept apart and they can only spend what they funded, but holding other people's money resembles money transmission and needs legal review before real use. So in live mode, only the operator can move money; everyone else is limited to the sandbox.
 
 - **Regulation.** Collecting money and redistributing it resembles a marketplace or money-transmission flow. Live Payouts needs PayPal to enable it on the account, and production would need PayPal's platform review. This project is sandbox-only.
 - **Ecosystems.** npm and PyPI only. Claims are GitHub-only.

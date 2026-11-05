@@ -103,7 +103,7 @@ export function Ledger() {
 
   return (
     <div className="page">
-      <PageHead eyebrow="Step 5 · Reconcile" title="Ledger" subtitle="Only movements PayPal has confirmed: subscription and top-up captures, payout item statuses and fees, refunds and returns. Webhooks and the hourly reconciler write the same idempotent entries." />
+      <PageHead eyebrow="Step 5" title="Money records" subtitle="Every money movement PayPal has confirmed: payments in, fees, payouts and refunds." />
       <div className="split">
         <Card title="Flow of funds" icon={<ArrowLeftRight size={17} />}>
           {p.fundingGross === 0 ? <Empty icon={<ArrowLeftRight size={22} />} title="No money has moved yet">Entries appear when PayPal confirms the first subscription payment or top-up.</Empty> : <FlowDiagram pool={p} />}

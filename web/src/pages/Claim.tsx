@@ -293,7 +293,7 @@ export function PublicClaim() {
               <Status value={data.status} />
             </div>
             <p className="muted">
-              This repository {data.status === "verified" ? "receives" : "is setting up"} {data.brand} payouts: when AI coding agents rely on it, their users' agent tithes are shared with its maintainers through PayPal.
+              This repository {data.status === "verified" ? "receives" : "is setting up"} {data.brand} payouts: when AI coding agents rely on it, their users' open-source budgets are shared with its maintainers through PayPal.
             </p>
             <div className="muted small">Claim started {dateTime(data.created_at)}{data.verified_at ? ` · verified ${dateTime(data.verified_at)}` : ""}</div>
             <Link className="btn" to={`/r/${data.repo.replace("github.com/", "")}`}>Open the repo page <ArrowRight size={15} /></Link>

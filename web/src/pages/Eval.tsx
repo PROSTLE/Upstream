@@ -28,9 +28,9 @@ export function Eval() {
   return (
     <div className="page">
       <PageHead
-        eyebrow="Trust"
-        title="Attribution eval"
-        subtitle="Does Muse Spark add anything over counting imports? Label real sessions with your own judgment, then compare both methods on exactly the same sessions."
+        eyebrow="More"
+        title="AI accuracy"
+        subtitle="Is the AI better than simply counting imports? Mark which packages really mattered in real sessions, then compare both on the same sessions."
       />
       {total > 0 && (
         <div className="row" style={{ gap: 10, marginBottom: 16 }}>

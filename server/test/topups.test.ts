@@ -93,19 +93,19 @@ before(() => {
 });
 
 test("top-up: approval link, capture books PayPal's gross and fee, retries and refunds book once", async () => {
-  const top = await t.startTopup({ amount: "25", source: "dashboard" });
+  const top = await t.startTopup({ userId: "local", amount: "25", source: "dashboard" });
   assert.match(top.approve_url!, /checkoutnow\?token=ORD1/);
   assert.equal(top.amount_minor, 2500);
 
   // The payer comes back before approving: nothing is booked and the order stays open.
   let r = await t.captureTopup(top.id);
   assert.equal(r.capture_id, null);
-  assert.equal(poolSummary("USD").fundingGross, 0);
+  assert.equal(poolSummary("USD", "local").fundingGross, 0);
 
   orders.get("ORD1")!.status = "APPROVED";
   r = await t.captureTopup(top.id);
   assert.equal(r.capture_status, "COMPLETED");
-  const p = poolSummary("USD");
+  const p = poolSummary("USD", "local");
   assert.equal(p.fundingGross, 2500);
   assert.equal(p.fundingFees, -87);
 
@@ -113,7 +113,7 @@ test("top-up: approval link, capture books PayPal's gross and fee, retries and r
   await t.captureTopup(top.id);
   await t.syncTopup(top.id);
   assert.deepEqual(captureRequestIds, [`${top.id}-capture`, `${top.id}-capture`], "both capture attempts used the same PayPal-Request-Id");
-  assert.equal(poolSummary("USD").fundingGross, 2500);
+  assert.equal(poolSummary("USD", "local").fundingGross, 2500);
 
   // A refund PayPal reports on the order comes out of the pool, minus the fee PayPal hands back.
   const o = orders.get("ORD1")!;
@@ -121,24 +121,24 @@ test("top-up: approval link, capture books PayPal's gross and fee, retries and r
   o.refunds = [{ id: "REF1", status: "COMPLETED", amount: { currency_code: "USD", value: "10.00" }, seller_payable_breakdown: { gross_amount: { currency_code: "USD", value: "10.00" }, paypal_fee: { currency_code: "USD", value: "0.30" }, net_amount: { currency_code: "USD", value: "9.70" } } }];
   await t.syncTopup(top.id);
   await t.syncTopup(top.id);
-  const after = poolSummary("USD");
+  const after = poolSummary("USD", "local");
   assert.equal(after.fundingGross, 1500);
   assert.equal(after.fundingFees, -57);
 });
 
 test("top-up limits: dashboard cap, and agents are capped per 24 hours with every request counted", async () => {
-  await assert.rejects(t.startTopup({ amount: "500.01", source: "dashboard" }), /largest one-time top-up/);
-  await assert.rejects(t.startTopup({ amount: "0", source: "dashboard" }), /more than zero/);
-  await assert.rejects(t.startTopup({ amount: "1.234", source: "dashboard" }), /precision/);
-  await t.startTopup({ amount: "15", source: "agent", note: "pool ran out" });
-  assert.equal(t.agentAllowance()!.left_minor, 500);
-  await assert.rejects(t.startTopup({ amount: "5.01", source: "agent" }), /more than an agent may request/);
-  await t.startTopup({ amount: "5", source: "agent" });
-  assert.equal(t.agentAllowance()!.left_minor, 0);
+  await assert.rejects(t.startTopup({ userId: "local", amount: "500.01", source: "dashboard" }), /largest one-time top-up/);
+  await assert.rejects(t.startTopup({ userId: "local", amount: "0", source: "dashboard" }), /more than zero/);
+  await assert.rejects(t.startTopup({ userId: "local", amount: "1.234", source: "dashboard" }), /precision/);
+  await t.startTopup({ userId: "local", amount: "15", source: "agent", note: "pool ran out" });
+  assert.equal(t.agentAllowance("local")!.left_minor, 500);
+  await assert.rejects(t.startTopup({ userId: "local", amount: "5.01", source: "agent" }), /more than an agent may request/);
+  await t.startTopup({ userId: "local", amount: "5", source: "agent" });
+  assert.equal(t.agentAllowance("local")!.left_minor, 0);
 });
 
 test("CHECKOUT.ORDER.APPROVED captures a top-up whose payer closed the tab", async () => {
-  const top = await t.startTopup({ amount: "12.00", source: "dashboard" });
+  const top = await t.startTopup({ userId: "local", amount: "12.00", source: "dashboard" });
   const o = [...orders.values()].find((x) => x.custom_id === top.id)!;
   o.status = "APPROVED";
   const id = await t.topupFromWebhook("CHECKOUT.ORDER.APPROVED", { id: o.id, status: "APPROVED" });
