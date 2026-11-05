@@ -5,3 +5,7 @@ data/
 *.db
 *.db-*
 .upstream/
+
+# Internal planning notes, kept locally only
+PROGRESS.md
+docs/COMPETITION.md
