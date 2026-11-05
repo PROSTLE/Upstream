@@ -98,6 +98,22 @@ test("a brand-new npm package resolves from the registry before the indexes know
   }
 });
 
+test("a failed metadata lookup keeps a package's known repo, so held money stays payable", async () => {
+  const { resolvePackage } = await import("../src/resolve/index.ts");
+  const { db } = await import("../src/db.ts");
+  db().prepare("INSERT INTO packages(ecosystem, name, repo, repo_provenance, resolved_at) VALUES ('npm','known-pkg','github.com/o/known-pkg','npm-registry:repository','2020-01-01T00:00:00.000Z')").run();
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("{}", { status: 503 })) as typeof fetch;
+  try {
+    const p = await resolvePackage("npm", "known-pkg", true);
+    assert.equal(p.repo, "github.com/o/known-pkg");
+    assert.equal(p.repo_provenance, "npm-registry:repository");
+    assert.ok(p.resolve_error, "the failure is still recorded");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 test("webhook verification sends PayPal the raw event body byte-for-byte", async () => {
   let sent = "";
   setPayPalFetch((async (input: string | URL | Request, init?: RequestInit) => {

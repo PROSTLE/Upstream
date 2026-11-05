@@ -43,6 +43,8 @@ const schema = z.object({
   TITHE_CURRENCY: z.string().length(3).toUpperCase(),
   TITHE_INTERVAL_UNIT: z.enum(["DAY", "WEEK", "MONTH", "YEAR"]),
   TITHE_PRODUCT_NAME: z.string().min(1),
+  // Where this project's code lives, for the source links and the hook install command.
+  SOURCE_REPO_URL: z.string().url().default("https://github.com/PROSTLE/Upstream"),
   BRAND_NAME: z.string().min(1),
 
   POLICY_MAX_PACKAGE_SHARE: fraction,

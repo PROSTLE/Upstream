@@ -13,10 +13,11 @@ Dependency lists can't tell the library your agent leaned on all afternoon from 
 | The AI finds what dependency lists miss | Live `muse-spark-1.3` on 12 scripted scenarios, 3 runs each: 12 of 12 correct, against 7 of 12 for counting imports, including rewritten logic and code added to an existing import. Same result on every run. [Results and limits](docs/BENCHMARK.md), and you can [re-run it](scripts/benchmark.mjs). The scenarios and answers were written by this project, so it's a sanity check rather than an accuracy figure |
 | A README can't talk the AI into paying it | A package whose README demanded all the money got nothing, and the AI flagged the attempt in 3 of 3 runs |
 | Code overrules the AI | 9 of 9 deliberately malicious AI outputs were blocked: invented packages, made-up evidence, payments to packages merely listed, and more |
-| Real PayPal funding | Sandbox subscription `I-743R8NEH7WYM`: $10.00 paid, PayPal's $0.84 fee recorded, $9.16 available |
+| The whole loop works end to end | A real Claude Code session with the real hook, then a live Muse review, a maintainer claim verified from the repo on GitHub, and a real sandbox payout: batch `D85JLLSK5RWHN`, $3.59 sent (transaction `98L012548L1896315`), PayPal's $0.25 fee recorded. Sending it twice paid once, PayPal rejected a replay, and PayPal's webhooks arrived with valid signatures |
+| Real PayPal funding | Sandbox subscription `I-743R8NEH7WYM`: $10.00 paid, PayPal's $0.84 fee recorded |
 | People's money and data stay apart | [Tests](server/test/workspaces.test.ts) act as one person attacking another over HTTP, and a real two-person run on the sandbox and live AI leaked nothing |
 
-**Not done yet, stated plainly:** no payout has reached a maintainer on the sandbox, PayPal webhooks haven't been received, and no real labelled sessions are on the AI accuracy page. There is no hosted demo yet, so trying it means running it locally.
+**Not done yet, stated plainly:** that run is one session, and the payout went to a test package this project owns (`split-cents`), so it proves the system works, not that anyone outside wants it. `split-cents` isn't on npm yet, so its repo link came from its own `package.json`, and the dashboard labels it that way. A one-time top-up hasn't been approved through PayPal, Log in with PayPal is off, and cancelling an unclaimed payout and refunds have only been tested against a stand-in for PayPal. No real labelled sessions are on the AI accuracy page yet. There's no permanent hosted demo, so trying it means running it locally.
 
 ---
 
@@ -201,7 +202,7 @@ Connect Claude Code: sign in, open **Connect your agent**, and copy the command,
 ## Tests
 
 ```bash
-npm test          # 59 tests: parsers, evidence extraction, validator, money math, the hook script and its spool, public repo views and badge,
+npm test          # 61 tests: parsers, evidence extraction, validator, money math, the hook script and its spool, public repo views and badge,
                   # top-ups (capture, fees, refunds, retries, agent cap), Log in with PayPal, PR credits, the plugin manifest, an end-to-end settlement,
                   # claim and settlement state guards, the safety checks (pass on real records, fail on altered ones), sign-in, and one person attacking another over HTTP
 node scripts/benchmark.mjs   # re-runs docs/BENCHMARK.md against the live AI model, about $0.30

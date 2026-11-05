@@ -18,7 +18,7 @@ const { auditReport } = await import("../src/audit.ts");
 const { evalReport } = await import("../src/attribution/eval.ts");
 const { currentSubscription, startSubscription, syncSubscription, upsertSubscription } = await import("../src/funding.ts");
 const { listTopups, startTopup, syncTopup } = await import("../src/topups.ts");
-const { moneyTrail, packagesForUser } = await import("../src/public.ts");
+const { moneyTrail, packagesForUser, publicActivity } = await import("../src/public.ts");
 const { userForGithub } = await import("../src/users.ts");
 const s = await import("../src/settlement.ts");
 
@@ -66,7 +66,7 @@ function attributed(userId: string, sessionId: string, pkg: string) {
   const evidence = (db().prepare("SELECT id FROM evidence WHERE session_id = ?").all(id) as { id: string }[]).map((e) => e.id);
   assert.ok(evidence.length, "the hook event produced evidence");
   const validated = { weights: [{ ecosystem: "npm", name: pkg, weight: 0.5, classification: "meaningful", evidence_ids: evidence, rationale: "", proposed_weight: 1 }], unallocated: 0.5, flags: [] };
-  const candidates = { candidates: [{ ecosystem: "npm", name: pkg, evidence_ids: evidence }], evidence: [], unattributed: [] };
+  const candidates = { candidates: [{ ecosystem: "npm", name: pkg, evidence_ids: evidence, counts: { dep_install: 1 } }], evidence: [], unattributed: [] };
   db().prepare("INSERT INTO attribution_runs(id, session_id, created_at, method, candidates_json, validated_json, flags_json, is_active) VALUES (?,?,?,'llm',?,?,'[]',1)").run(`run-${id}`, id, now(), JSON.stringify(candidates), JSON.stringify(validated));
   db().prepare("UPDATE sessions SET status = 'attributed' WHERE id = ?").run(id);
   return id;
@@ -162,6 +162,17 @@ test("reports, packages and money trails show only their owner's records", () =>
   assert.equal(alice.activity.llm_runs, 1);
   assert.equal(alice.activity.payout_items_confirmed, 0);
   assert.equal(bob.activity.payout_items_confirmed, 1);
+});
+
+test("the public home page shows real totals and nothing private", () => {
+  const a = publicActivity();
+  assert.equal(a.sessions_reviewed, 2);
+  assert.equal(a.packages_credited, 2);
+  assert.deepEqual(a.recent.map((r) => r.name).sort(), ["dayjs", "zod"]);
+  assert.ok(Number(a.paid) > 0, "Bob's payout is counted");
+  assert.deepEqual(a.recent.find((r) => r.name === "zod")?.signals, ["dep_install"]);
+  const text = JSON.stringify(a);
+  for (const secret of ["secret-project", "u_alice", "u_bob", "alice", "bob", "a1", "m@example.com", "d@example.com"]) assert.ok(!text.includes(secret), secret);
 });
 
 test("an operator login only reaches the operator's space from the GitHub account that first claimed it", () => {

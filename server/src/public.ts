@@ -129,6 +129,44 @@ export function reposWithMoney(limit = 50): RepoSummary[] {
     .slice(0, limit);
 }
 
+/**
+ * What the public home page shows: totals across everyone, plus recently credited packages and the kinds of evidence behind them.
+ * Package names are already public on repo pages. Projects, sessions, people and the AI's written reasons, which can name files, never appear here.
+ */
+export function publicActivity(limit = 4) {
+  const currency = config.TITHE_CURRENCY;
+  const sessions = db().prepare("SELECT id FROM sessions WHERE status = 'attributed' ORDER BY last_event_at DESC").all() as { id: string }[];
+  const credited = new Map<string, { ecosystem: string; name: string; classification: string; signals: string[] }>();
+  const seen = new Set<string>();
+  let reviewed = 0;
+  for (const s of sessions) {
+    const run = activeRun(s.id);
+    if (!run) continue;
+    reviewed++;
+    for (const c of run.candidates.candidates ?? []) seen.add(`${c.ecosystem}:${c.name}`);
+    for (const w of run.validated.weights) {
+      const key = `${w.ecosystem}:${w.name}`;
+      if (w.weight <= 0 || credited.has(key)) continue;
+      const candidate = run.candidates.candidates?.find((c) => c.ecosystem === w.ecosystem && c.name === w.name);
+      credited.set(key, { ecosystem: w.ecosystem, name: w.name, classification: w.classification, signals: Object.keys(candidate?.counts ?? {}) });
+    }
+  }
+  const sum = (status: string) => Number((db().prepare("SELECT COALESCE(SUM(amount_minor),0) AS t FROM allocations WHERE status = ? AND currency = ?").get(status, currency) as { t: number }).t);
+  return {
+    currency,
+    sessions_reviewed: reviewed,
+    packages_credited: credited.size,
+    packages_left_out: [...seen].filter((k) => !credited.has(k)).length,
+    verified_maintainers: Number((db().prepare("SELECT COUNT(DISTINCT repo) AS n FROM claims WHERE status = 'verified'").get() as { n: number }).n),
+    paid: fromMinor(sum("paid"), currency),
+    held: fromMinor(sum("reserved"), currency),
+    recent: [...credited.values()].slice(0, limit).map((c) => ({
+      ...c,
+      repo: (db().prepare("SELECT repo FROM packages WHERE ecosystem = ? AND name = ?").get(c.ecosystem, c.name) as { repo: string | null } | undefined)?.repo ?? null,
+    })),
+  };
+}
+
 /** The packages in this person's reviewed sessions and payouts: nobody sees what other people's agents used. */
 export function packagesForUser(userId: string): { ecosystem: string; name: string }[] {
   const seen = new Map<string, { ecosystem: string; name: string }>();

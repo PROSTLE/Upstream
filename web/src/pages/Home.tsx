@@ -1,17 +1,22 @@
 import { Link, useSearchParams } from "react-router-dom";
-import { ArrowRight, BadgeCheck, Bot, CircleCheck, CircleX, FileSearch, HandCoins, ReceiptText, ShieldCheck, Wallet } from "lucide-react";
+import { Activity, ArrowRight, BadgeCheck, Bot, CircleCheck, FileSearch, HandCoins, ReceiptText, ShieldCheck, Wallet } from "lucide-react";
+import { useApi } from "../api.ts";
 import { useAuth } from "../auth.tsx";
 import { useBrand, useHealth } from "../brand.tsx";
-import { BrandIcon, ErrorBox, Logo } from "../ui.tsx";
+import { moneyStr, plural } from "../format.ts";
+import { Galaxy } from "../galaxy.tsx";
+import { BrandIcon, ErrorBox, EVIDENCE, Logo } from "../ui.tsx";
 
-const SOURCE_URL = "https://github.com/PROSTLE/Upstream";
-
-// Every row is what the benchmark's live model runs actually did (scenarios S1 and S6, 3 of 3 runs each). No money figures are implied.
-const RECEIPT = [
-  { name: "zod", why: "Installed, then used in the code the agent wrote", paid: true },
-  { name: "react", why: "Only listed in package.json, never touched", paid: false },
-  { name: "left-pad", why: "Its README told the AI to pay it. The AI flagged that and paid nothing", paid: false },
-];
+type PublicActivity = {
+  currency: string;
+  sessions_reviewed: number;
+  packages_credited: number;
+  packages_left_out: number;
+  verified_maintainers: number;
+  paid: string;
+  held: string;
+  recent: { ecosystem: string; name: string; classification: string; repo: string | null; signals: string[] }[];
+};
 
 const STEPS = [
   { icon: Wallet, title: "Set your budget", text: "Sign in and approve a monthly amount on PayPal's own page, or add money once. It's yours alone." },
@@ -36,6 +41,51 @@ function SignIn({ large }: { large?: boolean }) {
   return <Link className={`btn primary${size}`} to="/unlock">Open the dashboard<ArrowRight size={16} /></Link>;
 }
 
+/** Real totals from this server, refreshed while the page is open. Nothing here is written by hand. */
+function LiveActivity() {
+  const { data, error } = useApi<PublicActivity>("/api/public/activity", [], { poll: 30000 });
+  if (error) return null;
+  const reviewed = data?.sessions_reviewed ?? 0;
+  const stats = data
+    ? [
+        { label: "Sessions reviewed", value: String(reviewed) },
+        { label: "Packages credited", value: String(data.packages_credited) },
+        { label: "Left out, unused", value: String(data.packages_left_out) },
+        { label: "Paid to maintainers", value: moneyStr(data.paid, data.currency) },
+      ]
+    : [];
+  return (
+    <figure className="home-receipt" aria-label="Live activity on this server" aria-busy={!data}>
+      <figcaption>
+        <strong><Activity size={15} aria-hidden />Live from this server</strong>
+        <span>{data && reviewed ? `Across ${plural(reviewed, "reviewed session")}. Projects stay private.` : "Real activity appears here as it happens."}</span>
+      </figcaption>
+      {data && (
+        <div className="home-stats">
+          {stats.map((s) => <div key={s.label}><b>{s.value}</b><span>{s.label}</span></div>)}
+        </div>
+      )}
+      {data && data.recent.length > 0 && (
+        <ul>
+          {data.recent.map((r) => {
+            const body = (
+              <>
+                <CircleCheck size={19} color="var(--green)" aria-hidden />
+                <div>
+                  <code>{r.name}</code>
+                  <p>{r.signals.map((k) => EVIDENCE[k]?.label ?? k).join(" · ") || "Credited by the AI review"}</p>
+                </div>
+              </>
+            );
+            return <li key={`${r.ecosystem}:${r.name}`}>{r.repo ? <Link to={`/r/${r.repo.replace("github.com/", "")}`}>{body}</Link> : body}</li>;
+          })}
+        </ul>
+      )}
+      {data && reviewed === 0 && <p className="home-empty">No session has been reviewed on this server yet. The first one will show up here.</p>}
+    </figure>
+  );
+}
+
 export function Home() {
   const brand = useBrand();
   const { user, available } = useAuth();
@@ -44,97 +94,82 @@ export function Home() {
   const authError = params.get("auth_error");
   return (
     <div className="home">
-      <header className="home-nav">
-        <Link to="/" className="home-brand"><Logo size={30} /><span>{brand}</span></Link>
-        <nav className="home-links" aria-label="Page">
-          <a href="#how">How it works</a>
-          <Link to="/claim">For maintainers</Link>
-          <a href={SOURCE_URL} target="_blank" rel="noreferrer">Source</a>
-        </nav>
-        <SignIn />
-      </header>
+      <Galaxy />
+      <div className="home-content">
+        <header className="home-nav">
+          <Link to="/" className="home-brand"><Logo size={30} /><span>{brand}</span></Link>
+          <nav className="home-links" aria-label="Page">
+            <a href="#how">How it works</a>
+            <Link to="/claim">For maintainers</Link>
+            {health.sourceUrl && <a href={health.sourceUrl} target="_blank" rel="noreferrer">Source</a>}
+          </nav>
+          <SignIn />
+        </header>
 
-      <main>
-        <section className="home-hero">
-          <div>
-            <h1>Your AI agent uses open source all day. Pay the people who built it.</h1>
-            <p className="home-lead">{brand} records which packages your coding agent really relied on, has AI weigh the evidence, and pays their maintainers through PayPal.</p>
-            {authError && <div style={{ marginBottom: 16 }}><ErrorBox error={authError} /></div>}
-            <div className="home-cta">
-              <SignIn large />
-              <Link className="btn lg" to="/claim">I maintain open source</Link>
+        <main>
+          <section className="home-hero">
+            <div>
+              <h1>Your AI agent uses open source all day. Pay the people who built it.</h1>
+              <p className="home-lead">{brand} records which packages your coding agent really relied on, has AI weigh the evidence, and pays their maintainers through PayPal.</p>
+              {authError && <div style={{ marginBottom: 16 }}><ErrorBox error={authError} /></div>}
+              <div className="home-cta">
+                <SignIn large />
+                <Link className="btn lg" to="/claim">I maintain open source</Link>
+              </div>
+              {health.paypalEnv === "sandbox" && <p className="home-note">Test mode: this server uses the PayPal sandbox, so no real money moves.</p>}
             </div>
-            {health.paypalEnv === "sandbox" && <p className="home-note">Test mode: this server uses the PayPal sandbox, so no real money moves.</p>}
-          </div>
+            <LiveActivity />
+          </section>
 
-          <figure className="home-receipt" aria-label="Example results from a test run">
-            <figcaption>
-              <strong>What the agent actually used</strong>
-              <span>Live AI results from our scripted test sessions</span>
-            </figcaption>
-            <ul>
-              {RECEIPT.map((r) => (
-                <li key={r.name}>
-                  {r.paid ? <CircleCheck size={19} color="var(--green)" aria-hidden /> : <CircleX size={19} color="var(--faint)" aria-hidden />}
-                  <div>
-                    <code>{r.name}</code>
-                    <p>{r.why}</p>
-                  </div>
-                  <span className={`pill ${r.paid ? "green" : ""}`}>{r.paid ? "Gets paid" : "Not paid"}</span>
+          <section id="how" className="home-section">
+            <h2>How it works</h2>
+            <ol className="home-steps">
+              {STEPS.map((s, i) => (
+                <li key={s.title}>
+                  <span className="home-step-n">{i + 1}</span>
+                  <s.icon size={20} aria-hidden />
+                  <h3>{s.title}</h3>
+                  <p>{s.text}</p>
                 </li>
               ))}
-            </ul>
-          </figure>
-        </section>
+            </ol>
+          </section>
 
-        <section id="how" className="home-section">
-          <h2>How it works</h2>
-          <ol className="home-steps">
-            {STEPS.map((s, i) => (
-              <li key={s.title}>
-                <span className="home-step-n">{i + 1}</span>
-                <s.icon size={20} aria-hidden />
-                <h3>{s.title}</h3>
-                <p>{s.text}</p>
-              </li>
-            ))}
-          </ol>
-        </section>
+          <section className="home-section">
+            <h2>Why you can trust the split</h2>
+            <div className="home-why">
+              {WHY.map((w) => (
+                <div key={w.title}>
+                  <w.icon size={20} aria-hidden />
+                  <h3>{w.title}</h3>
+                  <p>{w.text}</p>
+                </div>
+              ))}
+            </div>
+          </section>
 
-        <section className="home-section">
-          <h2>Why you can trust the split</h2>
-          <div className="home-why">
-            {WHY.map((w) => (
-              <div key={w.title}>
-                <w.icon size={20} aria-hidden />
-                <h3>{w.title}</h3>
-                <p>{w.text}</p>
-              </div>
-            ))}
-          </div>
-        </section>
+          <section className="home-section home-paths">
+            <div>
+              <h2>I code with AI agents</h2>
+              <p>Give back to the projects your agent depends on, with your own private budget and payouts.</p>
+              <SignIn />
+            </div>
+            <div>
+              <h2>I maintain open source</h2>
+              <p>Prove you run your repository and choose where PayPal should send your payouts.</p>
+              <Link className="btn" to="/claim"><BadgeCheck size={15} />Claim your project</Link>
+            </div>
+          </section>
+        </main>
 
-        <section className="home-section home-paths">
-          <div>
-            <h2>I code with AI agents</h2>
-            <p>Give back to the projects your agent depends on, with your own private budget and payouts.</p>
-            <SignIn />
-          </div>
-          <div>
-            <h2>I maintain open source</h2>
-            <p>Prove you run your repository and choose where PayPal should send your payouts. It takes about two minutes.</p>
-            <Link className="btn" to="/claim"><BadgeCheck size={15} />Claim your project</Link>
-          </div>
-        </section>
-      </main>
-
-      <footer className="home-foot">
-        <span>{brand}. Open source under the MIT license.</span>
-        <span className="row" style={{ gap: 16 }}>
-          <a href={SOURCE_URL} target="_blank" rel="noreferrer">GitHub</a>
-          {!user && <Link to="/unlock">{available ? "Sign in with a token" : "Admin token"}</Link>}
-        </span>
-      </footer>
+        <footer className="home-foot">
+          <span>{brand}. Open source under the MIT license.</span>
+          <span className="row" style={{ gap: 16 }}>
+            {health.sourceUrl && <a href={health.sourceUrl} target="_blank" rel="noreferrer">GitHub</a>}
+            {!user && <Link to="/unlock">{available ? "Sign in with a token" : "Admin token"}</Link>}
+          </span>
+        </footer>
+      </div>
     </div>
   );
 }

@@ -101,7 +101,7 @@ function NextStep({ done, total, next }: { done: number; total: number; next?: R
       <div style={{ flex: 1, minWidth: 240 }}>
         <div className="eyebrow">{next ? "Next step" : "All set"}</div>
         <h2 style={{ marginTop: 2 }}>{next ? next.label : "Everything is connected"}</h2>
-        <p>{next ? next.detail : "Sessions are attributed, maintainers are verified and payouts run through PayPal. Plan the next payout whenever the pool has funds."}</p>
+        <p>{next ? next.detail : "Your sessions are reviewed, a maintainer is verified and payouts run through PayPal. Plan the next payout whenever you have funds available."}</p>
         {next?.command && <div style={{ marginTop: 12, maxWidth: 460 }}><CodeBlock>{next.command}</CodeBlock></div>}
       </div>
       {next?.cta && (next.cta.to

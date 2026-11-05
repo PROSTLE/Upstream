@@ -14,7 +14,7 @@ function Provenance({ value }: { value: string | null }) {
   if (!value) return <span className="faint">—</span>;
   const attested = /SLSA_ATTESTATION|PUBLISH_ATTESTATION|GO_ORIGIN/.test(value);
   const Icon = attested ? ShieldCheck : value.startsWith("deps.dev") ? ShieldQuestion : ShieldAlert;
-  const label = attested ? "Attested" : value.startsWith("deps.dev") ? "Unverified metadata" : "ecosyste.ms";
+  const label = attested ? "Attested" : value.startsWith("deps.dev") ? "Unverified metadata" : value.startsWith("ecosyste.ms") ? "ecosyste.ms" : value.startsWith("npm-registry") ? "npm registry" : "Its own package.json";
   return (
     <span className={`pill ${attested ? "green" : "amber"}`} title={value}>
       <Icon size={12} />

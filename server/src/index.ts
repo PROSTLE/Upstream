@@ -11,7 +11,7 @@ import { buildCandidates } from "./evidence/candidates.ts";
 import { activeRun, attributeSession, runsForSession, setActiveRun } from "./attribution/run.ts";
 import { evalReport, LABELS, labelsAreBlind, saveLabels } from "./attribution/eval.ts";
 import { getPackage, normalizeRepo, resolveMany } from "./resolve/index.ts";
-import { badgeSvg, moneyTrail, packagesForUser, repoSummary, reposWithMoney } from "./public.ts";
+import { badgeSvg, moneyTrail, packagesForUser, publicActivity, repoSummary, reposWithMoney } from "./public.ts";
 import { sessionCredits } from "./credits.ts";
 import { auditReport } from "./audit.ts";
 import { agentAllowance, captureTopup, listTopups, startTopup, syncTopup } from "./topups.ts";
@@ -195,7 +195,7 @@ app.get("/api/overview", memberRead, (req, res) => {
 });
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, time: now(), brand: config.BRAND_NAME, features, paypal_env: config.PAYPAL_ENV, public_base_url: config.PUBLIC_BASE_URL, dashboard_access: config.DASHBOARD_ACCESS });
+  res.json({ ok: true, time: now(), brand: config.BRAND_NAME, features, paypal_env: config.PAYPAL_ENV, public_base_url: config.PUBLIC_BASE_URL, dashboard_access: config.DASHBOARD_ACCESS, source_url: config.SOURCE_REPO_URL });
 });
 
 // ---------- Sign in with GitHub ----------
@@ -488,6 +488,8 @@ app.get("/api/claims/public/:token", (req, res) => {
 const repoParam = (req: Request) => normalizeRepo(`https://github.com/${String(req.params.owner)}/${String(req.params.name).replace(/\.svg$/, "")}`);
 
 app.get("/api/public/repos", (_req, res) => res.json(reposWithMoney()));
+
+app.get("/api/public/activity", (_req, res) => res.json(publicActivity()));
 
 app.get("/api/public/repos/:owner/:name", (req, res) => {
   const repo = repoParam(req);

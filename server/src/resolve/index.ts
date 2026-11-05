@@ -166,8 +166,9 @@ export async function resolvePackage(eco: Ecosystem, name: string, force = false
   const eRepo = "repo" in e ? e.repo : undefined;
   const n = !dRepo && !eRepo && eco === "npm" ? await npmRegistry(name).catch((err) => ({ error: String(err) })) : undefined;
   const nRepo = n && "repo" in n ? n.repo : undefined;
-  const repo = dRepo ?? eRepo ?? nRepo ?? null;
-  const provenance = dRepo ? `deps.dev:${(d as any).provenance ?? "UNKNOWN"}` : eRepo ? "ecosyste.ms:repository_url" : nRepo ? "npm-registry:repository" : null;
+  // A failed lookup must not forget a repo already known: money held for that repo would stop being payable.
+  const repo = dRepo ?? eRepo ?? nRepo ?? cached?.repo ?? null;
+  const provenance = dRepo ? `deps.dev:${(d as any).provenance ?? "UNKNOWN"}` : eRepo ? "ecosyste.ms:repository_url" : nRepo ? "npm-registry:repository" : (cached?.repo_provenance ?? null);
   // A package found through the registry is resolved; the indexes simply haven't caught up yet.
   const errors = nRepo ? [] : [("error" in d && d.error) || "", ("error" in e && e.error) || ""].filter(Boolean);
 

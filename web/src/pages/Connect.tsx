@@ -2,11 +2,9 @@ import { useState } from "react";
 import { Bot, Eye, KeyRound, Lock, PlugZap, Puzzle, RefreshCw, ShieldCheck, TerminalSquare } from "lucide-react";
 import { api, useApi } from "../api.ts";
 import { useOverview } from "../overview.tsx";
-import { useBrand } from "../brand.tsx";
+import { useBrand, useHealth } from "../brand.tsx";
 import { ago, plural } from "../format.ts";
 import { ActionButton, BrandIcon, Card, CheckRow, CodeBlock, PageHead, useToast } from "../ui.tsx";
-
-const SOURCE_URL = "https://github.com/PROSTLE/Upstream";
 
 const SKILLS = [
   { cmd: "/upstream-oss:receipt", what: "What this session relied on, and how its share would split" },
@@ -20,15 +18,16 @@ export function Connect() {
   const [how, setHow] = useState<"hook" | "plugin">("hook");
   const [scope, setScope] = useState<"project" | "user">("project");
   const brand = useBrand();
+  const source = useHealth().sourceUrl ?? "<SOURCE_REPO_URL>";
   // The hook posts to the server's PUBLIC_BASE_URL, which differs from this page's origin under the Vite dev server.
   const origin = connect.data?.server_url ?? data?.public_base_url ?? "<SERVER_URL>";
   const token = connect.data?.token ?? "<YOUR_TOKEN>";
   const f = data?.features ?? {};
   const operator = Boolean(data?.viewer?.operator);
   const sessions = data?.counts?.sessions ?? 0;
-  const install = `git clone ${SOURCE_URL} upstream-hook
+  const install = `git clone ${source} upstream-hook
 node upstream-hook/hook/install.mjs --url ${origin} --token ${token} ${scope === "user" ? "--user" : "--project /path/to/your/project"}`;
-  const plugin = `git clone ${SOURCE_URL} upstream-hook
+  const plugin = `git clone ${source} upstream-hook
 cd upstream-hook && npm install
 claude --plugin-dir .
 
