@@ -82,7 +82,7 @@ export function validate(set: CandidateSet, proposal: ProposedWeight[], opts: { 
 
   for (const c of set.candidates) {
     const key = `${c.ecosystem}:${c.name}`;
-    const strong = c.counts.import_added || c.counts.dep_install || c.counts.manifest_add || c.counts.api_usage;
+    const strong = c.counts.import_added || c.counts.dep_install || c.counts.manifest_add || c.counts.api_usage || c.counts.logic_reused;
     if (strong && !(merged.get(key)?.weight ?? 0)) {
       flags.push({ level: "warn", code: "STRONG_CANDIDATE_UNPAID", package: key, message: `${key} has install/import evidence but received no weight.` });
     }

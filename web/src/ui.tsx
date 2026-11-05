@@ -88,6 +88,7 @@ export const EVIDENCE: Record<string, { label: string; icon: typeof Code2; tone:
   api_usage: { label: "API used in new code", icon: Code2, tone: "blue" },
   cli_run: { label: "CLI run", icon: Terminal, tone: "violet" },
   source_read: { label: "Read library source", icon: FileSearch, tone: "teal" },
+  logic_reused: { label: "Rewrote logic it read", icon: Code2, tone: "teal" },
   source_search: { label: "Searched library source", icon: Search, tone: "teal" },
   docs_fetch: { label: "Read docs", icon: Globe, tone: "amber" },
   docs_mcp: { label: "Docs via MCP", icon: BookOpen, tone: "amber" },

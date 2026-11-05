@@ -72,6 +72,7 @@ const schema = z.object({
   PAYPAL_LOGIN_ENABLED: optional,
 
   DEPSDEV_API_BASE: z.string().url(),
+  NPM_REGISTRY_BASE: z.string().url().default("https://registry.npmjs.org"),
   ECOSYSTEMS_API_BASE: z.string().url(),
   METADATA_CACHE_HOURS: z.coerce.number().positive(),
 });

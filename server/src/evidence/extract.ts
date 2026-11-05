@@ -20,6 +20,7 @@ export type EvidenceKind =
   | "api_usage"
   | "source_read"
   | "source_search"
+  | "logic_reused"
   | "docs_fetch"
   | "docs_mcp"
   | "web_search";

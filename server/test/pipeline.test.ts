@@ -49,6 +49,55 @@ test("hook events -> evidence -> candidates separates used, mapped and merely pr
   assert.ok(set.unattributed.some((u) => /"os"/.test(u.reason)), "stdlib import is not attributed to any package");
 });
 
+test("code rewritten after reading a library's source becomes evidence, but unrelated or imported code doesn't", async () => {
+  const read = (sid: string, file: string, excerpt: string, id: string) =>
+    ingest({ session_id: sid, hook_event_name: "PostToolUse", tool_name: "Read", tool_use_id: id, cwd: "/p", tool_input: { file_path: file }, tool_response: { file: { content: excerpt.padEnd(60, " ") } } });
+  const write = (sid: string, content: string, id: string) =>
+    ingest({ session_id: sid, hook_event_name: "PostToolUse", tool_name: "Write", tool_use_id: id, cwd: "/p", tool_input: { file_path: "/p/src/x.ts", content } });
+  const kinds = async (sid: string, pkg: string) => (await buildCandidates(sid, { resolve: false })).candidates.find((c) => c.name === pkg)?.counts ?? {};
+
+  read("re-1", "/p/node_modules/lodash/debounce.js", "function debounce(func, wait) { var timerId; }", "r1");
+  write("re-1", "export function debounce(fn: Function, ms: number) { let t: any; return () => { clearTimeout(t); t = setTimeout(fn, ms); }; }", "w1");
+  const candidates = await buildCandidates("re-1", { resolve: false });
+  assert.equal(candidates.candidates.find((c) => c.name === "lodash")?.counts.logic_reused, 1);
+  assert.deepEqual(candidates.evidence.find((e) => e.kind === "logic_reused")?.detail.shared_names, ["debounce"]);
+
+  read("re-2", "/p/node_modules/lodash/debounce.js", "function debounce(func, wait) { }", "r2");
+  write("re-2", "export function greetVisitor(who: string) { return who; }", "w2");
+  assert.equal((await kinds("re-2", "lodash")).logic_reused, undefined, "unrelated code");
+
+  read("re-3", "/p/node_modules/lodash/debounce.js", "function debounce(func, wait) { }", "r3");
+  write("re-3", "import _ from 'lodash';\nexport const debounce = (f: any) => _.debounce(f, 10);", "w3");
+  assert.equal((await kinds("re-3", "lodash")).logic_reused, undefined, "imported, so it's ordinary use");
+
+  write("re-4", "export function debounce(fn: Function) { return fn; }", "w4a");
+  read("re-4", "/p/node_modules/lodash/debounce.js", "function debounce(func, wait) { }", "r4");
+  assert.equal((await kinds("re-4", "lodash")).logic_reused, undefined, "written before the source was read");
+
+  read("re-5", "/p/node_modules/lodash/index.js", "function parse(x) { } function format(y) { }", "r5");
+  write("re-5", "export function parse(s: string) { return s; }\nexport function format(s: string) { return s; }", "w5");
+  assert.equal((await kinds("re-5", "lodash")).logic_reused, undefined, "generic names aren't a signal");
+});
+
+test("a brand-new npm package resolves from the registry before the indexes know it", async () => {
+  const { resolvePackage } = await import("../src/resolve/index.ts");
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes("registry.npmjs.org/brand-new-pkg/latest")) return new Response(JSON.stringify({ repository: { url: "git+https://github.com/Some-One/Brand-New-Pkg.git" }, homepage: "https://example.org/pkg" }), { status: 200 });
+    return new Response("{}", { status: 404 });
+  }) as typeof fetch;
+  try {
+    const p = await resolvePackage("npm", "brand-new-pkg");
+    assert.equal(p.repo, "github.com/some-one/brand-new-pkg");
+    assert.equal(p.repo_provenance, "npm-registry:repository");
+    assert.equal(p.homepage, "https://example.org/pkg");
+    assert.equal(p.resolve_error, null);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 test("webhook verification sends PayPal the raw event body byte-for-byte", async () => {
   let sent = "";
   setPayPalFetch((async (input: string | URL | Request, init?: RequestInit) => {

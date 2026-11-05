@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { db, json, LOCAL_USER, now, tx } from "../db.ts";
-import { extractEvidence, type HookPayload } from "./extract.ts";
-import { depsFromManifestFiles, type ManifestDeps } from "./parse.ts";
+import { extractEvidence, type EvidenceDraft, type HookPayload } from "./extract.ts";
+import { declaredNames, depsFromManifestFiles, ecosystemForFile, sourceFileName, type Ecosystem, type ManifestDeps } from "./parse.ts";
 
 export interface IngestPayload extends HookPayload {
   session_id: string;
@@ -26,6 +26,46 @@ export interface ManifestState {
  * Records one hook event in this person's space. Their ids are prefixed, because the session and tool ids come from
  * their own machine: without the prefix, someone could send another person's session id and write into that session.
  */
+/**
+ * Code written without importing a library leaves no import evidence, even if the agent read that library's source first and
+ * rewrote its logic. So when new code declares a name that a library file read earlier in this session also declares, or is named
+ * after, that is recorded. Only the matching names are kept, and the review decides what they mean.
+ */
+function reusedLogic(sessionId: string, p: IngestPayload, drafts: EvidenceDraft[]): EvidenceDraft[] {
+  if (p.tool_name !== "Write" && p.tool_name !== "Edit" && p.tool_name !== "MultiEdit") return [];
+  const input = p.tool_input ?? {};
+  const file = String(input.file_path ?? "");
+  if (!ecosystemForFile(file)) return [];
+  const edits = Array.isArray(input.edits) ? (input.edits as Record<string, unknown>[]) : [input];
+  const written = edits.map((e) => String(e.content ?? e.new_string ?? "")).join("\n");
+  const declared = declaredNames(written);
+  if (!declared.size) return [];
+  const imported = new Set(drafts.map((d) => d.module));
+  const reads = db()
+    .prepare("SELECT ecosystem, package, detail_json FROM evidence WHERE session_id = ? AND kind = 'source_read' AND package IS NOT NULL ORDER BY created_at")
+    .all(sessionId) as { ecosystem: Ecosystem; package: string; detail_json: string }[];
+  const shared = new Map<string, { ecosystem: Ecosystem; names: Set<string>; read: string }>();
+  for (const r of reads) {
+    if (imported.has(r.package)) continue;
+    const detail = json<{ path?: string; excerpt?: string }>(r.detail_json, {});
+    const inSource = declaredNames(detail.excerpt ?? "");
+    const fileName = sourceFileName(detail.path ?? "");
+    if (fileName) inSource.add(fileName);
+    const names = [...declared].filter((n) => inSource.has(n));
+    if (!names.length) continue;
+    const entry = shared.get(r.package) ?? { ecosystem: r.ecosystem, names: new Set<string>(), read: detail.path ?? "" };
+    names.forEach((n) => entry.names.add(n));
+    shared.set(r.package, entry);
+  }
+  return [...shared].map(([module, e]) => ({
+    kind: "logic_reused" as const,
+    ecosystem: e.ecosystem,
+    module,
+    strength: "moderate" as const,
+    detail: { file, tool: p.tool_name, shared_names: [...e.names].slice(0, 10), source_read: e.read },
+  }));
+}
+
 export function ingest(p: IngestPayload, userId: string = LOCAL_USER): { stored: boolean; evidence: number } {
   if (!p.session_id || !p.hook_event_name) throw new Error("session_id and hook_event_name are required");
   const at = p.upstream?.sent_at ?? now();
@@ -80,7 +120,8 @@ export function ingest(p: IngestPayload, userId: string = LOCAL_USER): { stored:
       );
     }
 
-    const drafts = extractEvidence(p);
+    const direct = extractEvidence(p);
+    const drafts = [...direct, ...reusedLogic(sessionId, p, direct)];
     const insert = d.prepare(
       "INSERT INTO evidence(id, session_id, hook_event_id, kind, ecosystem, package, hint, strength, detail_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
     );

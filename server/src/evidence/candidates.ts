@@ -179,7 +179,7 @@ export async function buildCandidates(sessionId: string, opts: { resolve?: boole
     const initial = new Set(ecosystem === "npm" ? manifest.initial?.npm ?? [] : (manifest.initial?.pypi ?? []).map(normalizePypi));
     const final = new Set(ecosystem === "npm" ? manifest.latest?.npm ?? [] : (manifest.latest?.pypi ?? []).map(normalizePypi));
     const codeEvidence = ev.some((e) =>
-      ["dep_install", "manifest_add", "import_added", "api_usage", "cli_run", "source_read"].includes(e.kind),
+      ["dep_install", "manifest_add", "import_added", "api_usage", "cli_run", "source_read", "logic_reused"].includes(e.kind),
     );
     const m = meta.get(k);
     candidates.push({

@@ -86,6 +86,14 @@ async function ecosystems(eco: Ecosystem, name: string) {
   };
 }
 
+/** The npm registry itself: deps.dev and ecosyste.ms can take a while to index a new package. Claims still prove who runs the repo. */
+async function npmRegistry(name: string) {
+  const r = await getJson(`${config.NPM_REGISTRY_BASE}/${name.replace("/", "%2F")}/latest`);
+  if (r.status !== 200) return { error: `npm registry ${r.status}` };
+  const repository = r.body?.repository;
+  return { repo: normalizeRepo(typeof repository === "string" ? repository : repository?.url), homepage: (r.body?.homepage as string) || undefined };
+}
+
 export async function fetchFundingYml(repo: string): Promise<{ path: string; parsed: Record<string, unknown>; raw: string } | undefined> {
   const [, owner, name] = repo.split("/");
   const headers: Record<string, string> = { Accept: "application/vnd.github.raw+json", "X-GitHub-Api-Version": "2022-11-28" };
@@ -156,9 +164,12 @@ export async function resolvePackage(eco: Ecosystem, name: string, force = false
   const e = es.status === "fulfilled" ? es.value : { error: String(es.reason) };
   const dRepo = "repo" in d ? d.repo : undefined;
   const eRepo = "repo" in e ? e.repo : undefined;
-  const repo = dRepo ?? eRepo ?? null;
-  const provenance = dRepo ? `deps.dev:${(d as any).provenance ?? "UNKNOWN"}` : eRepo ? "ecosyste.ms:repository_url" : null;
-  const errors = [("error" in d && d.error) || "", ("error" in e && e.error) || ""].filter(Boolean);
+  const n = !dRepo && !eRepo && eco === "npm" ? await npmRegistry(name).catch((err) => ({ error: String(err) })) : undefined;
+  const nRepo = n && "repo" in n ? n.repo : undefined;
+  const repo = dRepo ?? eRepo ?? nRepo ?? null;
+  const provenance = dRepo ? `deps.dev:${(d as any).provenance ?? "UNKNOWN"}` : eRepo ? "ecosyste.ms:repository_url" : nRepo ? "npm-registry:repository" : null;
+  // A package found through the registry is resolved; the indexes simply haven't caught up yet.
+  const errors = nRepo ? [] : [("error" in d && d.error) || "", ("error" in e && e.error) || ""].filter(Boolean);
 
   let fundingYml: Awaited<ReturnType<typeof fetchFundingYml>>;
   try {
@@ -176,7 +187,7 @@ export async function resolvePackage(eco: Ecosystem, name: string, force = false
     name,
     repo,
     repo_provenance: provenance,
-    homepage: ("homepage" in e && e.homepage) || null,
+    homepage: ("homepage" in e && e.homepage) || (n && "homepage" in n && n.homepage) || null,
     documentation_url: ("documentation_url" in e && e.documentation_url) || null,
     registry_url: ("registry_url" in e && e.registry_url) || null,
     funding_links: [...funding],
@@ -184,6 +195,7 @@ export async function resolvePackage(eco: Ecosystem, name: string, force = false
     sources: {
       depsdev: d,
       ecosystems: e,
+      npm_registry: n,
       repo_conflict: dRepo && eRepo && dRepo !== eRepo ? { depsdev: dRepo, ecosystems: eRepo } : undefined,
     },
     resolved_at: now(),

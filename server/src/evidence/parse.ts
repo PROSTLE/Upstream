@@ -143,6 +143,32 @@ export function usageLines(code: string, bindings: string[]): number {
   return n;
 }
 
+// Names too generic to suggest that code was copied from anywhere.
+const GENERIC_NAMES = new Set([
+  "main", "index", "init", "test", "tests", "util", "utils", "helper", "helpers", "value", "values", "result", "results", "default", "create", "update", "delete",
+  "start", "stop", "handler", "handle", "config", "options", "data", "name", "item", "items", "list", "parse", "format", "read", "write", "load", "save", "next", "self",
+  "this", "that", "args", "error", "state", "context", "app", "server", "client", "user", "foo", "bar", "baz", "temp", "exports", "module", "async", "function", "class",
+]);
+
+/** The functions, classes and variables some source code declares, lowercased, without generic names. */
+export function declaredNames(code: string): Set<string> {
+  const names = new Set<string>();
+  const patterns = [/\b(?:function\*?|class|def)\s+([A-Za-z_$][\w$]*)/g, /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/g];
+  for (const re of patterns) {
+    for (const m of code.matchAll(re)) {
+      const name = m[1].toLowerCase();
+      if (name.length >= 4 && !GENERIC_NAMES.has(name)) names.add(name);
+    }
+  }
+  return names;
+}
+
+/** The name of a library source file, such as debounce from lodash/debounce.js, unless it's generic. */
+export function sourceFileName(file: string): string | undefined {
+  const name = file.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "").toLowerCase();
+  return name && name.length >= 4 && !GENERIC_NAMES.has(name) ? name : undefined;
+}
+
 // ---------- shell commands ----------
 
 function shellSplit(cmd: string): string[][] {

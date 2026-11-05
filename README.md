@@ -2,9 +2,21 @@
 
 **Your AI coding agent pays the open-source maintainers it actually relied on, through PayPal.**
 
-Upstream records what a coding agent *really did* in a session (packages installed, code written against a library's API, library source studied, docs read). Muse Spark weighs that evidence; deterministic code then checks every weight. The result is paid to maintainers who have proven they control the repository, using **PayPal Payouts**. Funding comes from a fixed monthly "agent tithe" the developer approves once with **PayPal Subscriptions**.
+Dependency lists can't tell the library your agent leaned on all afternoon from one nobody touched. Upstream records what a coding agent *really did* in a session: packages installed, code written against a library's API, library source studied, docs read. Muse Spark weighs that evidence and must cite it, and code throws out anything it can't back up. Maintainers who prove they run the repository are then paid through **PayPal Payouts**, from a budget each person approves on PayPal's own page.
 
-> Built for *Build What's Next with PayPal and AI* (Devpost, 2026). PayPal sandbox only. MIT licensed.
+> Built for *Build What's Next with PayPal and AI* (Devpost, 2026). PayPal sandbox only, so no real money moves. MIT licensed. First commit: Oct 11, 2026.
+
+### What's proven so far
+
+| Claim | Evidence |
+|---|---|
+| The AI finds what dependency lists miss | Live `muse-spark-1.3` on 12 scripted scenarios, 3 runs each: 12 of 12 correct, against 7 of 12 for counting imports, including rewritten logic and code added to an existing import. Same result on every run. [Results and limits](docs/BENCHMARK.md), and you can [re-run it](scripts/benchmark.mjs). The scenarios and answers were written by this project, so it's a sanity check rather than an accuracy figure |
+| A README can't talk the AI into paying it | A package whose README demanded all the money got nothing, and the AI flagged the attempt in 3 of 3 runs |
+| Code overrules the AI | 9 of 9 deliberately malicious AI outputs were blocked: invented packages, made-up evidence, payments to packages merely listed, and more |
+| Real PayPal funding | Sandbox subscription `I-743R8NEH7WYM`: $10.00 paid, PayPal's $0.84 fee recorded, $9.16 available |
+| People's money and data stay apart | [Tests](server/test/workspaces.test.ts) act as one person attacking another over HTTP, and a real two-person run on the sandbox and live AI leaked nothing |
+
+**Not done yet, stated plainly:** no payout has reached a maintainer on the sandbox, PayPal webhooks haven't been received, and no real labelled sessions are on the AI accuracy page. There is no hosted demo yet, so trying it means running it locally.
 
 ---
 
@@ -14,7 +26,7 @@ Upstream records what a coding agent *really did* in a session (packages install
 - Existing funding tools split money by **dependency manifests** ([thanks.dev](https://thanks.dev), [ecosyste.ms Funds](https://funds.ecosyste.ms), and earlier [StackAid](https://itsfoss.com/news/stackaid-beta/), launched in 2022). A manifest can't tell the library your agent leaned on all afternoon from a dependency nobody touched.
 - AI-assisted development consumes open-source work heavily and has no feedback loop to maintainers. (The well-known infrastructure costs, such as Read the Docs' 73 TB month and Fedora blocking a whole country, come from *training crawlers*, not coding agents. We cite them only as context and don't claim coding agents caused them.)
 
-**Who it's for:** developers and teams who use AI coding agents daily and want an honest, low-effort way to give back. Also the maintainers whose code those agents use.
+**Who it's for:** developers and teams who use AI coding agents daily and want an honest, low-effort way to give back, and the maintainers whose code those agents use. The strongest long-term fit is companies that already budget for open source and want an auditable reason for each payment, running their own copy with their own PayPal account.
 
 ## What it does
 
@@ -37,12 +49,12 @@ Claude Code ──hooks──► evidence (installs, imports + lines using them,
      verified webhooks + hourly reconciler ─► ledger (actual PayPal fees, UNCLAIMED → cancel → returned → re-held)
 ```
 
-Three surfaces:
+Where people use it:
 
 | Surface | For | What you do there |
 |---|---|---|
 | **Agent hook + MCP server** | the developer's coding agent | Hooks capture evidence automatically. The optional MCP server gives the agent a guarded Payouts tool. |
-| **Funder dashboard** | the developer or team | Fund with PayPal, review sessions and attribution, approve and send payouts, reconcile the ledger, run the eval. |
+| **Private dashboard** | anyone who signs in with GitHub | Fund with PayPal, review sessions, approve and send payouts, check the money records, measure the AI. |
 | **Maintainer claim page** | open-source maintainers | Prove you control a repo, then register a PayPal email. Public, no Upstream account needed. |
 | **Public repo page + README badge** | maintainers and their users | `/r/owner/name` shows what agents relied on and what is held, paid or in flight; `/api/badge/owner/name.svg` puts "$X waiting · claim it" in a README. |
 
@@ -52,7 +64,7 @@ Three surfaces:
 |---|---|
 | Meaningfully integrate PayPal | Subscriptions (catalog product, plan, subscription, transactions), Orders v2 one-time top-ups (create, capture, read; fees and refunds from PayPal's own numbers), Log in with PayPal for maintainers' verified payout email, Payouts (create batch, show batch, show item, cancel unclaimed item), Webhooks (create/patch subscription, `verify-webhook-signature`), OAuth2 client credentials. Money only moves through PayPal. |
 | Meaningfully incorporate AI | Muse Spark turns raw session evidence into cited value weights, which is the core judgement of the product. Its output is measured against a deterministic baseline on sessions *you* label (Eval page). |
-| Working prototype | Runs locally with one command, or on Render (`render.yaml`). No mock data or mock fallbacks: a missing credential disables that feature and the UI says which. |
+| Working prototype | Runs locally (see [Run it locally](#run-it-locally)), with `render.yaml` for hosting. No mock data or mock fallbacks: a missing credential disables that feature and the UI says which. |
 | Documented | This README, `.env.example`, and inline docs in the code. |
 | Tools identified | See [Tools used](#tools-used). |
 
@@ -92,7 +104,7 @@ Details that matter:
 - **Baseline** (`baseline.ts`): *imports written × lines using them*, the simple heuristic the AI has to beat.
 - **Eval** (`eval.ts`, Eval page): label packages in real sessions as meaningful, incidental or not used. Upstream then reports precision, recall, F1, accuracy and weight error (L1) for Muse Spark and the baseline **on the same sessions**. Labels saved before any attribution ran are marked **blind** by the server (from stored timestamps), and the page can score blind sessions on their own, so the labeller can't have been nudged by either method's weights. Nothing is precomputed; with no labels, the page says so.
 
-Why the baseline isn't enough, from this repo's smoke test (Claude Code-shaped events piped through the real hook and server, not yet a live Claude Code session): the agent added code against an existing `dayjs` import, and studied `lodash/debounce.js` before writing its own debounce. Import counting gives both **0%**. Catching that kind of use (API use without a new import, reimplementation after reading source) is what the LLM step is for, and the eval measures whether it actually does.
+Why the baseline isn't enough, from the [benchmark](docs/BENCHMARK.md): when an agent adds code to a file that already imports `dayjs`, or studies `lodash/debounce.js` and writes its own debounce, import counting pays nothing. It also pays for an import nobody uses. Muse Spark got these right, though on scenarios this project wrote, so real sessions on the AI accuracy page are the test that counts.
 
 ## The evidence layer (the crux)
 
@@ -105,7 +117,8 @@ The collector is a Claude Code **hook** (`hook/upstream-hook.mjs`), not a tool t
 | `import_added` | New `import`/`require`/`from … import` in written code, with the number of added lines using those bindings (type-only imports are weak) |
 | `api_usage` | New code using a package already imported in that file (the hook attaches the file's first 8 KB) |
 | `cli_run` | `npx`, `bunx`, `pnpm dlx`, `uvx`, `pipx run` |
-| `source_read` / `source_search` | Read/Grep/Glob inside `node_modules/<pkg>` or `site-packages/<module>` (excerpt kept for reimplementation checks) |
+| `logic_reused` | After reading a package's source, the agent wrote its own code declaring the same names. Only the matching names are kept. Catches rewritten logic that no import reveals, and it can be fooled by a coincidental name, so the review judges it |
+| `source_read` / `source_search` | Read/Grep/Glob inside `node_modules/<pkg>` or `site-packages/<module>` (a short excerpt is kept, which `logic_reused` compares against) |
 | `docs_fetch` | WebFetch URLs: npmjs.com, pypi.org, GitHub, unpkg/jsDelivr, or a host matching the package's resolved homepage/docs |
 | `docs_mcp` | Context7 `resolve-library-id` / `query-docs` calls |
 | `web_search` | Package name appearing in a search query (weak) |
@@ -123,7 +136,7 @@ Python import names are mapped to distributions (`yaml` → PyYAML, `PIL` → pi
 ## Trust: what you don't have to take on faith
 
 - **A private space for each person.** Anyone can sign in with GitHub and gets their own sessions, budget, money records, payouts, safety checks and agent token. Other people's records answer "not found", a person can only spend money they funded, and hourly reconciliation books each payment to its owner (`server/test/workspaces.test.ts` attacks this over HTTP). Packages and maintainer claims are shared, so a maintainer verifies once for everyone. Each person's AI reviews are capped per day because the server pays for them. Maintainer pages (`/claim`, `/r/owner/name`, the badge) are public, and `DASHBOARD_ACCESS=public` shows the operator's space to anyone as a read-only demo.
-- **Live audit** (`server/src/audit.ts`, `GET /api/audit`, *Live audit* page). Ten checks re-read the stored records on every request: every ledger entry points at a PayPal object; held plus in-flight money is covered by the PayPal-confirmed balance; every payout went to a maintainer verified before approval, with stored proof; each payout item equals its allocations to the cent; the ledger agrees with each item's PayPal status (sent, fee and return booked exactly once); items respect the caps recorded with their run; only signature-verified webhooks changed anything; every paid share cites evidence that exists in the evidence table; every allocation traces to sessions whose attribution pays that package; unfinished batches were re-read from PayPal in the last 2 hours. A check with nothing to examine reports *nothing to check yet*, never a pass, and the page says so plainly when the server hasn't called PayPal or Muse Spark yet. `server/test/audit.test.ts` runs a real payout through the settlement code, expects every check to pass, then alters one record at a time and expects the matching check to fail.
+- **Live audit** (`server/src/audit.ts`, `GET /api/audit`, *Safety checks* page). Ten checks re-read the stored records on every request: every ledger entry points at a PayPal object; held plus in-flight money is covered by the PayPal-confirmed balance; every payout went to a maintainer verified before approval, with stored proof; each payout item equals its allocations to the cent; the ledger agrees with each item's PayPal status (sent, fee and return booked exactly once); items respect the caps recorded with their run; only signature-verified webhooks changed anything; every paid share cites evidence that exists in the evidence table; every allocation traces to sessions whose attribution pays that package; unfinished batches were re-read from PayPal in the last 2 hours. A check with nothing to examine reports *nothing to check yet*, never a pass, and the page says so plainly when the server hasn't called PayPal or Muse Spark yet. `server/test/audit.test.ts` runs a real payout through the settlement code, expects every check to pass, then alters one record at a time and expects the matching check to fail.
 - **Locked history.** Once a session is in a payout, its attribution can't be re-run or swapped, so the money trail can't be rewritten after the fact. A claim's `verified_at` records when ownership was first proven; a replaced or revoked claim can't come back.
 
 ## Maintainer claims (ownership proof)
@@ -140,7 +153,7 @@ Shares for repos nobody has claimed are **held** for `POLICY_RESERVE_DAYS`, then
 Requires **Node.js ≥ 22.18** (built-in SQLite and TypeScript type stripping, so there is no native build and no compile step). Python is optional: it's only used for import→distribution mapping in Python projects.
 
 ```bash
-git clone <this repo> upstream && cd upstream
+git clone https://github.com/PROSTLE/Upstream upstream && cd upstream
 npm install
 cp .env.example .env        # fill in the values below
 npm run doctor              # live, read-only check of every credential and external API
@@ -157,45 +170,41 @@ npm start                   # http://localhost:8787
 | `MODEL_API_KEY` | dev.meta.ai → API keys |
 | `ADMIN_TOKEN`, `INGEST_TOKEN` | any long random strings, e.g. `node -e "console.log(crypto.randomUUID())"` |
 | `GITHUB_TOKEN` | optional but recommended: anonymous GitHub API access is 60 requests/hour, which FUNDING.yml lookups exhaust quickly. A fine-grained token with public read access is enough |
-| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | GitHub → Settings → Developer settings → OAuth Apps; callback `PUBLIC_BASE_URL/api/claims/github/callback` |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | GitHub → Settings → Developer settings → OAuth Apps. Add two callbacks: `PUBLIC_BASE_URL/api/auth/github/callback` and `PUBLIC_BASE_URL/api/claims/github/callback` |
+| `OPERATOR_GITHUB_LOGINS` | your GitHub login. It owns any data from before accounts existed and the server-wide tasks. Everyone else who signs in gets their own space |
 | `PUBLIC_BASE_URL` | your https URL. PayPal only delivers webhooks to https, so use Render or a tunnel such as `cloudflared tunnel --url http://localhost:8787` |
 
 For development, `npm run dev` runs the API with `--watch` and Vite on http://localhost:5173.
 
-Connect Claude Code. The simplest way is the bundled **Claude Code plugin** (hooks, MCP server and the `/upstream-oss:receipt`, `/upstream-oss:credits` and `/upstream-oss:fund` skills). Claude Code asks for the server URL and tokens and keeps the tokens in its secure storage:
-
-```bash
-claude --plugin-dir /path/to/upstream   # after npm install in the clone
-```
-
-Or install just the hooks into one project:
-
-```bash
-node hook/install.mjs --url <PUBLIC_BASE_URL> --token <INGEST_TOKEN> --project /path/to/your/project --with-mcp
-```
+Connect Claude Code: sign in, open **Connect your agent**, and copy the command, which is already filled in with your own token. It installs the hooks into a project. The same page has a **Claude Code plugin** option that adds slash commands and keeps your token in Claude Code's secure storage.
 
 ### Testing instructions for judges
 
-1. **Sandbox accounts.** In the PayPal Developer Dashboard you have a sandbox *business* account (sends payouts) and can create a *personal* account (receives them, and also pays the subscription). Use the personal account's email when claiming.
-2. **Fund.** Funding page → *Approve with PayPal* → log in with the sandbox personal account. Back on the page, *Sync from PayPal* books the first payment once PayPal reports it (the ledger shows gross and fee). Or use *Add funds once*: approve a one-time payment and Upstream captures it on return.
-3. **Code.** Install the hook in any npm or Python project and run a short Claude Code session (for example "add input validation with zod"). The session appears under **Agent sessions** in real time.
-4. **Attribute.** On the session page, first label packages under *Your ground truth* (labels saved before attribution count as blind), then *Attribute with Muse Spark*. Compare the Muse Spark and Baseline tabs and read the validator flags.
-5. **Claim.** Open `/claim` and claim a GitHub repo **you** administer (for example one of your own packages the agent used), entering the sandbox personal email (or *Connect my PayPal account* when Log in with PayPal is enabled).
-6. **Pay.** Payouts → *Plan payout* → review the policy checks → *Approve* → *Send with PayPal Payouts* → *Sync from PayPal*. Try *Replay batch* to see PayPal reject the duplicate `sender_batch_id`, and *Cancel* on an `UNCLAIMED` item (send to an email that has no sandbox account to produce one).
-7. **Reconcile.** The Ledger shows every PayPal-confirmed movement and the API audit log (request ids, debug ids). *Live audit* re-checks the records against the payout rules.
+**In 2 minutes, without installing anything:** read [What's proven so far](#whats-proven-so-far) and the [benchmark](docs/BENCHMARK.md), then look at [the check that stops one person reaching another's data](server/test/workspaces.test.ts) and [what code does to the AI's proposal](server/src/attribution/validate.ts).
 
-Sign in with GitHub to get your own private space, with your own agent token on the Connect page. `ADMIN_TOKEN` is only the operator's fallback for scripts and for servers without GitHub sign-in. The claim page and repo pages need no sign-in.
+**In about 15 minutes, on your own machine** (you need a PayPal sandbox app, a Meta Model API key, a GitHub OAuth app and Claude Code):
+
+1. **Sign in** with GitHub. You get your own empty space, with one clear next step on the Overview page.
+2. **Add funds.** *Add funds* page → approve with PayPal, logging in with a sandbox *personal* account (create one in the PayPal Developer Dashboard). *Sync from PayPal* records the payment and PayPal's fee. Or add money once: approve a one-time payment and Upstream captures it on return.
+3. **Code.** Run the command from *Connect your agent*, then run a short Claude Code session (for example "add input validation with zod"). It appears under *Coding sessions* as it happens.
+4. **Review.** On the session page, you can first mark which packages really mattered under *Your ground truth* (labels saved before the review count as blind). Then click *Review with Muse Spark* and compare it with the Baseline tab.
+5. **Claim.** Open `/claim` and claim a GitHub repo **you** administer, entering the sandbox personal email.
+6. **Pay.** *Pay maintainers* → *Plan payout* → review the checks → *Approve* → *Send with PayPal Payouts* → *Sync from PayPal*. Try *Replay batch* to see PayPal reject the duplicate, and *Cancel* on an `UNCLAIMED` item (send to an email with no sandbox account to produce one).
+7. **Check.** *Money records* shows every PayPal-confirmed movement and your API calls. *Safety checks* re-checks your records against the payout rules.
+
+`ADMIN_TOKEN` is only the operator's fallback for scripts and for servers without GitHub sign-in. The claim page and repo pages need no sign-in.
 
 ## Deploy on Render
 
-`render.yaml` defines one web service with a 1 GB persistent disk for SQLite (this needs a paid instance; the free plan has no disk). It generates `ADMIN_TOKEN` and `INGEST_TOKEN` and prompts for secrets. After the first deploy, set `PUBLIC_BASE_URL` to the service URL and run `npm run doctor` and then `npm run setup:paypal` from the Render shell to register the webhook. The server also reconciles open batches hourly by itself.
+`render.yaml` defines one web service with a 1 GB persistent disk for SQLite. Accounts and money records live there, so this needs a paid instance: the free plan has no disk and can wipe them on restart. It generates `ADMIN_TOKEN` and `INGEST_TOKEN` and prompts for secrets. After the first deploy, set `PUBLIC_BASE_URL` to the service URL and run `npm run doctor` and then `npm run setup:paypal` from the Render shell to register the webhook. The server also reconciles open batches hourly by itself.
 
 ## Tests
 
 ```bash
-npm test          # 57 tests: parsers, evidence extraction, validator, money math, the hook script and its spool, public repo views and badge,
+npm test          # 59 tests: parsers, evidence extraction, validator, money math, the hook script and its spool, public repo views and badge,
                   # top-ups (capture, fees, refunds, retries, agent cap), Log in with PayPal, PR credits, the plugin manifest, an end-to-end settlement,
-                  # claim and settlement state guards, the live audit (passes on real records, fails on altered ones), and HTTP access rules
+                  # claim and settlement state guards, the safety checks (pass on real records, fail on altered ones), sign-in, and one person attacking another over HTTP
+node scripts/benchmark.mjs   # re-runs docs/BENCHMARK.md against the live AI model, about $0.30
 npm run doctor    # live, read-only checks against PayPal, Muse Spark, GitHub, deps.dev and ecosyste.ms (needs .env)
 npm run typecheck
 npm run icons     # re-render the favicon and app icons from the one vector mark (scripts/icons.mjs)
@@ -211,41 +220,23 @@ The settlement test drives plan → approve → execute twice (exactly one PayPa
 | **Claude Code hooks** | Runtime: the evidence collector (`PostToolUse`, `SessionStart`, `Stop`, `SessionEnd`). |
 | **Claude Code plugin** | Packaging: `.claude-plugin/plugin.json` bundles the hooks, the MCP server and three skills, with `userConfig` for the URL and tokens. |
 | **Model Context Protocol** (`@modelcontextprotocol/sdk`) | Runtime: Upstream's MCP server exposing guarded Payouts actions to agents. |
-| **PayPal REST APIs** (sandbox) | Subscriptions, Payouts, Webhooks, as listed above. |
-| **deps.dev API v3**, **ecosyste.ms Packages API**, **GitHub REST API** | Package → repo, funding links, FUNDING.yml, repo permissions. |
+| **PayPal REST APIs** (sandbox) | Subscriptions, Orders v2, Payouts, Webhooks and Identity (Log in with PayPal), as listed above. |
+| **deps.dev API v3**, **ecosyste.ms Packages API**, **npm registry**, **GitHub REST API** | Package → repo, funding links, FUNDING.yml, repo permissions, and Sign in with GitHub. |
 | **AG Grid Community** + **AG Charts Community** | Sessions, packages, payout items, allocations, ledger and API-audit grids; attribution and eval charts. |
-| **Render** | Hosting via `render.yaml`. |
+| **Render** | Optional hosting via `render.yaml`. |
 | Lucide, Simple Icons, Inter, JetBrains Mono | UI icons and type. The PayPal mark is PayPal's own file from paypalobjects.com. |
 | **resvg** (`@resvg/resvg-js`) | Build time: renders the app icons from the hand-drawn SVG mark. |
-| Claude Code (as a coding assistant) | Used to help write this project. |
+| **Claude Code** (as a coding assistant) | Used to help write this project, including its benchmark scenarios. |
 
 ## Limitations (on purpose, in the open)
 
-- **All funds pass through one PayPal business account.** Each person's records are kept apart and they can only spend what they funded, but holding other people's money resembles money transmission and needs legal review before real use. So in live mode, only the operator can move money; everyone else is limited to the sandbox.
-
-- **Regulation.** Collecting money and redistributing it resembles a marketplace or money-transmission flow. Live Payouts needs PayPal to enable it on the account, and production would need PayPal's platform review. This project is sandbox-only.
+- **Regulation.** All funds pass through one PayPal business account. Each person's records are kept apart and they can only spend what they funded, but holding and redistributing other people's money resembles a marketplace or money-transmission flow and needs legal review before real use. Live Payouts also needs PayPal to enable it on the account. This project is sandbox-only, and in live mode only the operator can move money.
+- **Demand.** Nobody has yet shown they'd pay for this. The problem is well documented, but willingness to fund it is the biggest open question.
+- **The operator can read the database.** Sessions are private between users in the app, but whoever runs the server holds the data, so only connect a server you trust.
 - **Ecosystems.** npm and PyPI only. Claims are GitHub-only.
-- **Evidence limits.** Code the agent writes from memory, without installing, importing, reading source or docs, leaves no trace. Unlabelled sessions have no accuracy guarantee; that's why the eval exists.
+- **Evidence limits.** Code the agent writes from memory, without installing, importing, reading source or docs, leaves no trace. `logic_reused` matches declared names, so renamed logic goes unseen and a coincidental name can trigger it. Unlabelled sessions have no accuracy guarantee; that's why the eval exists.
 - **Partial refunds** of a subscription payment are flagged but not booked, because the transaction list doesn't break out the refunded amount.
 - **Per-package cap.** In a session where one package did everything, the cap deliberately leaves the rest of that session's slice in the pool.
-
-## What changed after the design review
-
-An earlier review scored the idea 18.5/25 and listed weaknesses. Each claim was re-checked against primary sources:
-
-| Review point | Check | What we did |
-|---|---|---|
-| Lead with 47%, not 60% | Confirmed (The Register; Tidelift's split is 60% "hobbyists" / 47% "unpaid for their work") | The pitch states both, with the distinction. |
-| MCP-tool-only evidence is weak; Context7 already fills that slot; diff scans resemble thanks.dev | Agreed | The evidence comes from **hooks**, not tool choice. Context7 calls become evidence. API use and source reads go beyond manifest scanning. |
-| "Used vs merely present" is the crux | Agreed | Explicit candidate status. The validator can never pay a merely-present package. |
-| Claims need ownership proof (deps.dev links unverified) | Confirmed in deps.dev docs | GitHub admin/maintain check, or a FUNDING.yml token. Unverified repos are held, never paid. |
-| Show the LLM beats a deterministic baseline | Agreed | Baseline plus eval on user-labelled sessions, like for like. |
-| Rollover needs the cancel call | Confirmed (`POST /v1/payments/payouts-item/{id}/cancel`, UNCLAIMED only) | Policy auto-cancel plus a manual cancel button, books the return and re-holds. |
-| "Funding in = payouts out + held" won't balance; fees | Confirmed (payout fee reported per item) | Fees are ledger lines from PayPal's own numbers. The reconciliation equation includes them. |
-| Remote MCP is `/sse` and `/http`, not `/mcp` | PayPal's docs show `https://mcp.sandbox.paypal.com/sse` | Not used at runtime. Upstream calls the REST APIs directly. |
-| An item-level DENIED webhook exists | **Not confirmed.** PayPal's event list has `PAYMENT.PAYOUTSBATCH.DENIED` only. | We subscribe to the 11 documented payout events. |
-| AG Grid prize requires AG Studio | **Not confirmed.** The official rules say "submissions that use any AG Grid tools". | We use AG Grid and AG Charts where they do real work. A project can win only one sponsor prize anyway. |
-| Deadline | Confirmed in the official rules: Nov 12, 2026, 12:00 pm PT | — |
 
 ## Sources
 
