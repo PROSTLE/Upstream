@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import {
-  ArrowLeft, ArrowLeftRight, BadgeCheck, Boxes, ExternalLink, FlaskConical, Gavel, Keyboard, KeyRound, LayoutDashboard, Lock, LogOut, Menu, Monitor, Moon, PlugZap, Search, Send,
+  ArrowLeft, ArrowLeftRight, BadgeCheck, Blocks, Boxes, ExternalLink, FlaskConical, Gavel, Keyboard, KeyRound, LayoutDashboard, Lock, LogOut, Menu, Monitor, Moon, PlugZap, Search, Send,
   ShieldCheck, Sun, TerminalSquare, Wallet,
 } from "lucide-react";
 import { getAdminToken, setAdminToken } from "./api.ts";
@@ -32,6 +32,7 @@ const Policy = lazy(() => import("./pages/Policy.tsx").then((m) => ({ default: m
 const RepoPage = lazy(() => import("./pages/Repo.tsx").then((m) => ({ default: m.RepoPage })));
 const CheckStart = lazy(() => import("./pages/Check.tsx").then((m) => ({ default: m.CheckStart })));
 const CheckResult = lazy(() => import("./pages/Check.tsx").then((m) => ({ default: m.CheckResult })));
+const BuiltWith = lazy(() => import("./pages/BuiltWith.tsx").then((m) => ({ default: m.BuiltWith })));
 
 // The money flow, in order: fund → collect evidence → verify maintainers → pay → reconcile.
 const FLOW: (NavItem & { step: number })[] = [
@@ -58,7 +59,7 @@ function titleFor(path: string): string {
 
 export function App() {
   const loc = useLocation();
-  const isPublic = loc.pathname === "/" || loc.pathname.startsWith("/claim") || loc.pathname.startsWith("/c/") || loc.pathname.startsWith("/r/") || loc.pathname === "/check" || loc.pathname.startsWith("/check/");
+  const isPublic = loc.pathname === "/" || loc.pathname.startsWith("/claim") || loc.pathname.startsWith("/c/") || loc.pathname.startsWith("/r/") || loc.pathname === "/check" || loc.pathname.startsWith("/check/") || loc.pathname === "/how-its-built";
   if (isPublic) {
     return (
       <Suspense fallback={<div className="public-wrap"><div className="public-card"><Loading rows={1} /></div></div>}>
@@ -70,6 +71,7 @@ export function App() {
         <Route path="/r/:owner/:name" element={<RepoPage />} />
         <Route path="/check" element={<CheckStart />} />
         <Route path="/check/:id" element={<CheckResult />} />
+        <Route path="/how-its-built" element={<BuiltWith />} />
       </Routes>
       </Suspense>
     );
@@ -295,6 +297,11 @@ function Sidebar({ open }: { open: boolean }) {
       <a className="nav-link" href="/claim" target="_blank" rel="noreferrer">
         <BadgeCheck size={17} strokeWidth={1.9} className="nav-icon" />
         Claim page
+        <ExternalLink size={13} style={{ marginLeft: "auto", color: "var(--faint)" }} aria-label="opens in a new tab" />
+      </a>
+      <a className="nav-link" href="/how-its-built" target="_blank" rel="noreferrer">
+        <Blocks size={17} strokeWidth={1.9} className="nav-icon" />
+        How it's built
         <ExternalLink size={13} style={{ marginLeft: "auto", color: "var(--faint)" }} aria-label="opens in a new tab" />
       </a>
       <div className="sidebar-foot" style={{ marginTop: "auto" }}>

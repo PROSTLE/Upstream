@@ -101,6 +101,7 @@ export function Home() {
           <nav className="home-links" aria-label="Page">
             <a href="#how">How it works</a>
             <Link to="/claim">For maintainers</Link>
+            <Link to="/how-its-built">How it's built</Link>
             {health.sourceUrl && <a href={health.sourceUrl} target="_blank" rel="noreferrer">Source</a>}
           </nav>
           <SignIn />
@@ -166,6 +167,7 @@ export function Home() {
         <footer className="home-foot">
           <span>{brand}. Open source under the MIT license.</span>
           <span className="row" style={{ gap: 16 }}>
+            <Link to="/how-its-built">How it's built</Link>
             {health.sourceUrl && <a href={health.sourceUrl} target="_blank" rel="noreferrer">GitHub</a>}
             {!user && <Link to="/unlock">{available ? "Sign in with a token" : "Admin token"}</Link>}
           </span>

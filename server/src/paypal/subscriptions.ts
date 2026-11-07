@@ -1,7 +1,17 @@
-// Catalog Products v1 + Subscriptions v1 (field names from PayPal's OpenAPI schemas).
+// Subscriptions v1 through PayPal's Server SDK, which APIMatic generates (paypal/sdk.ts). The SDK has no Catalog
+// Products API, so the product the plan belongs to is still created with a direct call.
+// The types below describe PayPal's JSON reply (field names from PayPal's OpenAPI schemas).
+import {
+  ApplicationContextUserAction,
+  ExperienceContextShippingPreference,
+  IntervalUnit,
+  PlanRequestStatus,
+  TenureType,
+} from "@paypal/paypal-server-sdk";
 import { config } from "../config.ts";
 import { getSetting, setSetting } from "../db.ts";
 import { link, paypal } from "./client.ts";
+import { viaSdk } from "./sdk.ts";
 
 export async function ensureProductAndPlan(): Promise<{ productId: string; planId: string; created: string[] }> {
   const created: string[] = [];
@@ -25,24 +35,27 @@ export async function ensureProductAndPlan(): Promise<{ productId: string; planI
 
   let planId = getSetting(planKey);
   if (!planId) {
-    const res = await paypal<{ id: string; status: string }>("POST", "/v1/billing/plans", {
-      requestId: `upstream-plan-${productId}-${config.TITHE_CURRENCY}-${config.TITHE_AMOUNT}-${config.TITHE_INTERVAL_UNIT}`,
-      body: {
-        product_id: productId,
-        name: `${config.TITHE_PRODUCT_NAME} (${config.TITHE_AMOUNT} ${config.TITHE_CURRENCY} / ${config.TITHE_INTERVAL_UNIT.toLowerCase()})`,
-        status: "ACTIVE",
-        billing_cycles: [
-          {
-            frequency: { interval_unit: config.TITHE_INTERVAL_UNIT, interval_count: 1 },
-            tenure_type: "REGULAR",
-            sequence: 1,
-            total_cycles: 0, // 0 = regular cycle runs until cancelled (PayPal schema)
-            pricing_scheme: { fixed_price: { currency_code: config.TITHE_CURRENCY, value: config.TITHE_AMOUNT } },
-          },
-        ],
-        payment_preferences: { auto_bill_outstanding: true, payment_failure_threshold: 1 },
-      },
-    });
+    const product = productId;
+    const res = await viaSdk<{ id: string; status: string }>((s) =>
+      s.subscriptions.createBillingPlan({
+        paypalRequestId: `upstream-plan-${product}-${config.TITHE_CURRENCY}-${config.TITHE_AMOUNT}-${config.TITHE_INTERVAL_UNIT}`,
+        body: {
+          productId: product,
+          name: `${config.TITHE_PRODUCT_NAME} (${config.TITHE_AMOUNT} ${config.TITHE_CURRENCY} / ${config.TITHE_INTERVAL_UNIT.toLowerCase()})`,
+          status: PlanRequestStatus.Active,
+          billingCycles: [
+            {
+              frequency: { intervalUnit: config.TITHE_INTERVAL_UNIT as IntervalUnit, intervalCount: 1 },
+              tenureType: TenureType.Regular,
+              sequence: 1,
+              totalCycles: 0, // 0 = regular cycle runs until cancelled (PayPal schema)
+              pricingScheme: { fixedPrice: { currencyCode: config.TITHE_CURRENCY, value: config.TITHE_AMOUNT } },
+            },
+          ],
+          paymentPreferences: { autoBillOutstanding: true, paymentFailureThreshold: 1 },
+        },
+      }),
+    );
     planId = res.data.id;
     setSetting(planKey, planId);
     setSetting("paypal.active_plan_key", planKey);
@@ -70,27 +83,29 @@ export interface Subscription {
 export async function createSubscription(userId: string): Promise<{ id: string; planId: string; approveUrl: string }> {
   const planId = activePlanId();
   if (!planId) throw new Error("No PayPal plan yet. Run `npm run setup:paypal` first.");
-  const res = await paypal<Subscription>("POST", "/v1/billing/subscriptions", {
-    requestId: `upstream-sub-${crypto.randomUUID()}`,
-    body: {
-      plan_id: planId,
-      custom_id: userId,
-      application_context: {
-        brand_name: config.BRAND_NAME,
-        shipping_preference: "NO_SHIPPING",
-        user_action: "SUBSCRIBE_NOW",
-        return_url: `${config.PUBLIC_BASE_URL}/api/funding/return`,
-        cancel_url: `${config.PUBLIC_BASE_URL}/funding?cancelled=1`,
+  const res = await viaSdk<Subscription>((s) =>
+    s.subscriptions.createSubscription({
+      paypalRequestId: `upstream-sub-${crypto.randomUUID()}`,
+      body: {
+        planId,
+        customId: userId,
+        applicationContext: {
+          brandName: config.BRAND_NAME,
+          shippingPreference: ExperienceContextShippingPreference.NoShipping,
+          userAction: ApplicationContextUserAction.SubscribeNow,
+          returnUrl: `${config.PUBLIC_BASE_URL}/api/funding/return`,
+          cancelUrl: `${config.PUBLIC_BASE_URL}/funding?cancelled=1`,
+        },
       },
-    },
-  });
+    }),
+  );
   const approveUrl = link(res.data, "approve");
   if (!approveUrl) throw new Error("PayPal did not return an approve link for the subscription.");
   return { id: res.data.id, planId, approveUrl };
 }
 
 export async function getSubscription(id: string) {
-  return paypal<Subscription>("GET", `/v1/billing/subscriptions/${encodeURIComponent(id)}`);
+  return viaSdk<Subscription>((s) => s.subscriptions.getSubscription({ id }));
 }
 
 export interface SubscriptionTransaction {
@@ -105,9 +120,7 @@ export interface SubscriptionTransaction {
 }
 
 export async function listSubscriptionTransactions(id: string, start: Date, end: Date) {
-  return paypal<{ transactions?: SubscriptionTransaction[] }>(
-    "GET",
-    `/v1/billing/subscriptions/${encodeURIComponent(id)}/transactions`,
-    { query: { start_time: start.toISOString(), end_time: end.toISOString() } },
+  return viaSdk<{ transactions?: SubscriptionTransaction[] }>((s) =>
+    s.subscriptions.listSubscriptionTransactions({ id, startTime: start.toISOString(), endTime: end.toISOString() }),
   );
 }
