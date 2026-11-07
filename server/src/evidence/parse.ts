@@ -191,7 +191,8 @@ function shellSplit(cmd: string): string[][] {
       quote = c;
       continue;
     }
-    if (c === "&" || c === ";" || c === "|" || c === "\n" || c === "(" || c === ")") {
+    // Braces end a command too, for PowerShell blocks such as `if ($?) { npm install zod }` and shell groups.
+    if (c === "&" || c === ";" || c === "|" || c === "\n" || c === "(" || c === ")" || c === "{" || c === "}") {
       push();
       if (cur.length) segments.push(cur);
       cur = [];
@@ -228,6 +229,15 @@ const pySpecName = (s: string) => {
   return m ? normalizePypi(m[1]) : undefined;
 };
 
+// Commands whose name isn't the package that provides them. `npx tsc` runs TypeScript, not the unrelated "tsc" package.
+const BIN_PACKAGE: Record<string, string> = {
+  tsc: "typescript",
+  tsserver: "typescript",
+  ng: "@angular/cli",
+  nest: "@nestjs/cli",
+  "vue-cli-service": "@vue/cli-service",
+};
+
 export function parseCommand(command: string): CommandRef[] {
   const out: CommandRef[] = [];
   for (let seg of shellSplit(command)) {
@@ -255,7 +265,8 @@ export function parseCommand(command: string): CommandRef[] {
       }
     } else if (["npx", "bunx"].includes(b) || (["pnpm", "yarn"].includes(b) && sub === "dlx")) {
       const first = args(["npx", "bunx"].includes(b) ? [sub, ...rest].filter(Boolean) : rest)[0];
-      const name = first ? npmSpecName(first) : undefined;
+      const spec = first ? npmSpecName(first) : undefined;
+      const name = spec ? BIN_PACKAGE[spec] ?? spec : undefined;
       if (name) out.push({ ecosystem: "npm", package: name, kind: "cli_run", command: seg.join(" ") });
     } else if (["pip", "pip3"].includes(b) && sub === "install") {
       for (const n of args(rest)) {

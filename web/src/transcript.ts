@@ -8,7 +8,7 @@ const FILE_HEAD = 8_000;
 // The same patterns as hook/upstream-hook.mjs and hook/hooks.json. server/test/transcript.test.ts keeps them in step.
 export const SECRET_FILE = /(^|[\\/])(\.env(\..*)?|.*\.(pem|key|p12|pfx)|id_(rsa|ed25519|ecdsa)(\.pub)?|credentials(\.json)?|\.npmrc|\.pypirc)$/i;
 export const SOURCE_FILE = /\.(m|c)?(j|t)sx?$|\.(vue|svelte|astro|py|pyi)$/i;
-export const RECORDED_TOOLS = /^(?:Bash|Edit|MultiEdit|Write|NotebookEdit|Read|Grep|Glob|WebFetch|WebSearch|mcp__.*)$/;
+export const RECORDED_TOOLS = /^(?:Bash|PowerShell|Edit|MultiEdit|Write|NotebookEdit|Read|Grep|Glob|WebFetch|WebSearch|mcp__.*)$/;
 const DEPENDENCY_FILE = /node_modules|site-packages|dist-packages/;
 const MANIFEST_FILE = /^(package\.json|pyproject\.toml|requirements.*\.(txt|in))$/i;
 const PYTHON_FILE = /\.(py|pyi|ipynb)$|site-packages|dist-packages/i;

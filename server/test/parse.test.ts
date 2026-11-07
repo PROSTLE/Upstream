@@ -49,6 +49,21 @@ test("usage lines ignore import lines and member access of other objects", () =>
   assert.equal(usageLines(code, ["z"]), 1);
 });
 
+test("installs run through Claude Code's PowerShell tool on Windows are evidence too", async () => {
+  const { extractEvidence } = await import("../src/evidence/extract.ts");
+  const got = extractEvidence({
+    session_id: "s",
+    hook_event_name: "PostToolUse",
+    tool_name: "PowerShell",
+    tool_input: { command: "Set-Location C:\\proj; npm install zod; if ($?) { npx tsx src/index.ts }" },
+  } as never);
+  assert.deepEqual(got.map((e) => [e.kind, e.module]), [["dep_install", "zod"], ["cli_run", "tsx"]]);
+});
+
+test("a command named differently from its package credits the package", () => {
+  assert.deepEqual(parseCommand("npx tsc --noEmit && npx ng build && pnpm dlx tsx a.ts").map((c) => c.package), ["typescript", "@angular/cli", "tsx"]);
+});
+
 test("install commands across package managers", () => {
   const got = parseCommand("npm i -D vitest@^2 && pnpm add @tanstack/react-query; pip install 'requests[socks]>=2' -r req.txt && uv add Pydantic_Core && npx prisma migrate dev && python -m pip install httpx");
   assert.deepEqual(got.map((c) => [c.ecosystem, c.package, c.kind]), [

@@ -85,7 +85,8 @@ export function extractEvidence(p: HookPayload): EvidenceDraft[] {
   const input = p.tool_input ?? {};
   const out: EvidenceDraft[] = [];
 
-  if (tool === "Bash") {
+  // Claude Code on Windows runs commands through its PowerShell tool; both carry the command in tool_input.command.
+  if (tool === "Bash" || tool === "PowerShell") {
     const command = str(input.command);
     for (const c of parseCommand(command)) {
       out.push({

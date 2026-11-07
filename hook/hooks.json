@@ -6,7 +6,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash|Edit|MultiEdit|Write|NotebookEdit|Read|Grep|Glob|WebFetch|WebSearch|mcp__.*",
+        "matcher": "Bash|PowerShell|Edit|MultiEdit|Write|NotebookEdit|Read|Grep|Glob|WebFetch|WebSearch|mcp__.*",
         "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hook/upstream-hook.mjs\"", "async": true }]
       }
     ],

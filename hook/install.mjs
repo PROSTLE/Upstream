@@ -42,7 +42,7 @@ const wanted = {
   SessionStart: [{ hooks: [entry({ timeout: 10 })] }],
   PostToolUse: [
     {
-      matcher: "Bash|Edit|MultiEdit|Write|NotebookEdit|Read|Grep|Glob|WebFetch|WebSearch|mcp__.*",
+      matcher: "Bash|PowerShell|Edit|MultiEdit|Write|NotebookEdit|Read|Grep|Glob|WebFetch|WebSearch|mcp__.*",
       hooks: [entry({ async: true })],
     },
   ],

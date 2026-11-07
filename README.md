@@ -204,7 +204,7 @@ flowchart TB
 | `server/src/paypal/` | Every PayPal call; `sdk.ts` wires in PayPal's Server SDK |
 | `server/src/settlement.ts`, `ledger.ts`, `money/` | Payouts, the ledger, live money events, the timeline |
 | `server/src/claims.ts`, `public.ts`, `check.ts` | Maintainer claims, public repo pages and badges, `/check` |
-| `server/test/` | 136 tests |
+| `server/test/` | 138 tests |
 | `web/src/` | The dashboard, home page and in-browser session converter |
 | `mcp/src/`, `.claude-plugin/`, `skills/` | The MCP server and the Claude Code plugin with four skills |
 
@@ -299,7 +299,7 @@ npm start                   # http://localhost:8787
 | `OPERATOR_GITHUB_LOGINS` | Your GitHub login |
 | `PUBLIC_BASE_URL` | Your https address (a tunnel locally). Leave it out on Render. |
 
-A missing credential turns its feature off, and the dashboard says which one. Nothing falls back to mock data. `npm test` runs 136 tests. The PayPal stand-in exists only in the tests, and the product always talks to PayPal. To deploy, use [`render.yaml`](render.yaml): one web service with a persistent disk, which needs a paid instance.
+A missing credential turns its feature off, and the dashboard says which one. Nothing falls back to mock data. `npm test` runs 138 tests. The PayPal stand-in exists only in the tests, and the product always talks to PayPal. To deploy, use [`render.yaml`](render.yaml): one web service with a persistent disk, which needs a paid instance.
 
 ---
 
@@ -309,7 +309,7 @@ A missing credential turns its feature off, and the dashboard says which one. No
 - **Demand is unproven.** The problem is documented. Willingness to pay for this isn't.
 - **The operator can read the database.** Only connect your agent to a server you trust.
 - **npm and PyPI only.** Maintainer claims are GitHub-only.
-- **Evidence has blind spots.** Code written from memory leaves no trace. Installs run through Claude Code's PowerShell tool on Windows are missed. `npx tsc` credits a package named `tsc`.
+- **Evidence has blind spots.** Code the agent writes from memory, without installing, importing or reading anything, leaves no trace.
 
 **On novelty.** Funding open source from dependency trees exists (thanks.dev, StackAid, ecosyste.ms Funds). Paying maintainers from evidence of what an agent **actually used**, separating "used" from "merely present", is what we didn't find anywhere. That evidence layer is Upstream's contribution.
 
