@@ -75,11 +75,14 @@ test("spool flush skips a torn line, sends the rest once and keeps nothing behin
   // The second line is cut short, as after a crash mid-append; it used to block every later flush.
   fs.writeFileSync(spool, `${JSON.stringify(queued[0])}\n{"hook_event_name":"Sto\n${JSON.stringify(queued[1])}\n`);
   const received: any[] = [];
+  const { gunzipSync } = await import("node:zlib");
   const server = createServer((req, res) => {
-    let body = "";
-    req.on("data", (c) => (body += c));
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => {
-      const b = JSON.parse(body);
+      // The hook gzips what it sends, the way Express on the real server inflates it.
+      assert.equal(req.headers["content-encoding"], "gzip");
+      const b = JSON.parse(gunzipSync(Buffer.concat(chunks)).toString("utf8"));
       received.push(...(Array.isArray(b) ? b : [b]));
       res.writeHead(200, { "content-type": "application/json" }).end("{}");
     });

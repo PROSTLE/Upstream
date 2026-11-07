@@ -141,6 +141,18 @@ test("behind Render's proxies, each visitor has their own limit, and a forged ad
   assert.equal((await post(`198.51.100.2, 198.51.100.1, 104.23.160.9, ${lb}`)).status, 429, "an address put in front by the visitor is ignored");
 });
 
+test("a gzipped upload is accepted, and the size limit applies to what it unpacks to", { timeout: 60_000 }, async () => {
+  const { gzipSync } = await import("node:zlib");
+  const base = await startServer();
+  const post = (body: string) => realFetch(`${base}/api/check`, { method: "POST", headers: { "content-type": "application/json", "content-encoding": "gzip" }, body: gzipSync(body) });
+  const ok = await post(JSON.stringify({ events: converted.events, file_name: "s.jsonl" }));
+  assert.equal(ok.status, 200);
+  assert.match(((await ok.json()) as { id: string }).id, /^chk_/);
+  // About 12 MB of JSON squeezes into a few KB of gzip; it must still be refused for its real size.
+  const huge = JSON.stringify({ events: converted.events, file_name: "s.jsonl", padding: "x".repeat(12_000_000) });
+  assert.equal((await post(huge)).status, 413);
+});
+
 test("over HTTP, signed out: the sample flow works, an unknown id is a 404, and the hard limit turns an address away", { timeout: 90_000 }, async () => {
   const base = await startServer();
   const post = () => realFetch(`${base}/api/check`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ events: converted.events, file_name: "s.jsonl", stats: converted.stats, warnings: converted.warnings }) });

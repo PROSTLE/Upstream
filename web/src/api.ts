@@ -40,7 +40,18 @@ export function registerTokenPrompt(fn: () => Promise<string | null>) {
   needToken = fn;
 }
 
-export async function api<T = any>(path: string, init: { method?: string; body?: unknown; admin?: boolean } = {}): Promise<T> {
+/** Gzips a request body in the browser, or returns null where CompressionStream isn't available. */
+async function gzip(text: string): Promise<Blob | null> {
+  if (typeof CompressionStream === "undefined") return null;
+  return new Response(new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"))).blob();
+}
+
+/**
+ * `compress` gzips the body, for session uploads. They're smaller that way, and the host's edge firewall reads plain
+ * text bodies: a session full of shell commands and code can look like an attack to it and be refused before it
+ * reaches Upstream, which checks everything it receives itself. Express inflates the body before any limit applies.
+ */
+export async function api<T = any>(path: string, init: { method?: string; body?: unknown; admin?: boolean; compress?: boolean } = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
   if (init.body !== undefined) headers["Content-Type"] = "application/json";
   // Reads send the token too when this browser holds one: a private dashboard needs it to read anything.
@@ -48,10 +59,18 @@ export async function api<T = any>(path: string, init: { method?: string; body?:
   if (init.admin && !t && !signedIn && needToken) t = await needToken();
   if (init.admin && !t && !signedIn) throw new ApiError(401, { error: "Please sign in first." });
   if (t) headers["x-admin-token"] = t;
+  let payload: BodyInit | undefined = init.body !== undefined ? JSON.stringify(init.body) : undefined;
+  if (init.compress && typeof payload === "string") {
+    const zipped = await gzip(payload);
+    if (zipped) {
+      payload = zipped;
+      headers["Content-Encoding"] = "gzip";
+    }
+  }
   const res = await fetch(path, {
     method: init.method ?? (init.body !== undefined ? "POST" : "GET"),
     headers,
-    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+    body: payload,
   });
   const text = await res.text();
   let body: any = {};

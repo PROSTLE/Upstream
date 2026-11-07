@@ -32,7 +32,7 @@ function ImportModal({ onClose, onImported }: { onClose: () => void; onImported:
         let evidence = 0;
         let sessionId = "";
         for (const events of chunkEvents(converted.events, UPLOAD_CHUNK_BYTES)) {
-          const r = await api<{ session_id: string; stored: number; evidence: number }>("/api/sessions/import", { body: { file_name: file.name, events }, admin: true });
+          const r = await api<{ session_id: string; stored: number; evidence: number }>("/api/sessions/import", { body: { file_name: file.name, events }, admin: true, compress: true });
           stored += r.stored;
           evidence += r.evidence;
           sessionId = r.session_id;

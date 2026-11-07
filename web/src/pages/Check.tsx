@@ -35,7 +35,7 @@ export function CheckStart() {
 
   const send = async (body: { events: unknown[]; file_name: string; stats: unknown; warnings: unknown }) => {
     try {
-      const r = await api<{ id: string }>("/api/check", { body });
+      const r = await api<{ id: string }>("/api/check", { body, compress: true });
       nav(`/check/${r.id}`);
     } catch (e) {
       setError(e instanceof ApiError && e.status === 413 ? "This session is too large to check here: it's over 10 MB even without your own files' contents. Sign in and import it from the Coding sessions page instead, which sends it in parts." : (e as Error).message);

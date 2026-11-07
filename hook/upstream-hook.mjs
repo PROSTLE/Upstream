@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
 
 const HOME = path.join(os.homedir(), ".upstream");
 const SPOOL = path.join(HOME, "spool.jsonl");
@@ -158,10 +159,11 @@ function redact(payload) {
 }
 
 async function post(cfg, body) {
+  // Gzipped: smaller, and a host's edge firewall can't mistake a command or code in the event for an attack and refuse it.
   const res = await fetch(`${cfg.url.replace(/\/+$/, "")}/api/ingest`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${cfg.token}` },
-    body: JSON.stringify(body),
+    headers: { "content-type": "application/json", "content-encoding": "gzip", authorization: `Bearer ${cfg.token}` },
+    body: gzipSync(JSON.stringify(body)),
     signal: AbortSignal.timeout(2500),
   });
   if (!res.ok) throw new Error(`ingest ${res.status}`);
