@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import {
-  ArrowLeft, ArrowLeftRight, BadgeCheck, Blocks, Boxes, ExternalLink, Eye, FlaskConical, Gavel, Keyboard, KeyRound, LayoutDashboard, Lock, LogOut, Menu, Monitor, Moon, PlugZap, Search, Send,
+  ArrowLeft, ArrowLeftRight, BadgeCheck, Blocks, Boxes, ChartNoAxesCombined, ExternalLink, Eye, FlaskConical, Gavel, Keyboard, KeyRound, LayoutDashboard, Lock, LogOut, Menu, Monitor, Moon, PlugZap, Search, Send,
   ShieldCheck, Sun, TerminalSquare, Wallet,
 } from "lucide-react";
 import { getAdminToken, setAdminToken } from "./api.ts";
@@ -15,6 +15,8 @@ import { useBrand, useHealth } from "./brand.tsx";
 import { useAuth } from "./auth.tsx";
 const Home = lazy(() => import("./pages/Home.tsx").then((m) => ({ default: m.Home })));
 const Overview = lazy(() => import("./pages/Overview.tsx").then((m) => ({ default: m.Overview })));
+// AG Studio is large: it is only fetched when someone opens /insights.
+const Insights = lazy(() => import("./pages/Insights.tsx").then((m) => ({ default: m.Insights })));
 const Funding = lazy(() => import("./pages/Funding.tsx").then((m) => ({ default: m.Funding })));
 const Sessions = lazy(() => import("./pages/Sessions.tsx").then((m) => ({ default: m.Sessions })));
 const SessionDetail = lazy(() => import("./pages/SessionDetail.tsx").then((m) => ({ default: m.SessionDetail })));
@@ -48,7 +50,8 @@ const OTHER: NavItem[] = [
   { to: "/policy", label: "Payout rules", icon: Gavel, keywords: "policy caps limits fees reserve rules" },
   { to: "/connect", label: "Connect your agent", icon: PlugZap, keywords: "install hook mcp setup" },
 ];
-const ALL_NAV: NavItem[] = [{ to: "/dashboard", label: "Overview", icon: LayoutDashboard, keywords: "home dashboard" }, ...FLOW, ...OTHER];
+const INSIGHTS: NavItem = { to: "/insights", label: "Insights", icon: ChartNoAxesCombined, keywords: "studio dashboard analytics ag studio charts board" };
+const ALL_NAV: NavItem[] = [{ to: "/dashboard", label: "Overview", icon: LayoutDashboard, keywords: "home dashboard" }, INSIGHTS, ...FLOW, ...OTHER];
 
 function titleFor(path: string): string {
   if (path === "/dashboard") return "Overview";
@@ -201,6 +204,7 @@ function Shell() {
           <Suspense fallback={<div className="page"><Loading /></div>}>
           <Routes>
             <Route path="/dashboard" element={<Overview />} />
+            <Route path="/insights" element={<Insights />} />
             <Route path="/funding" element={<Funding />} />
             <Route path="/sessions" element={<Sessions />} />
             <Route path="/sessions/:id" element={<SessionDetail />} />
@@ -295,6 +299,10 @@ function Sidebar({ open }: { open: boolean }) {
       <NavLink to="/dashboard" end className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
         <LayoutDashboard size={17} strokeWidth={1.9} className="nav-icon" />
         Overview
+      </NavLink>
+      <NavLink to={INSIGHTS.to} className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
+        <INSIGHTS.icon size={17} strokeWidth={1.9} className="nav-icon" />
+        {INSIGHTS.label}
       </NavLink>
       <div className="nav-label">Step by step</div>
       <div className="flow-rail">

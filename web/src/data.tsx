@@ -74,7 +74,7 @@ export function Grid<T>({ rows, columns, height = 420, onRowClick, getRowId, emp
 }
 
 export const chartPalette = ["#2f5bea", "#0f9d94", "#c27803", "#6d4ae0", "#c42b2b", "#7c8597", "#3aa0e8"];
-const chartPaletteDark = ["#7090ff", "#2ec4b9", "#f0a531", "#a48bff", "#f26d6d", "#9aa1b2", "#5bb8f5"];
+export const chartPaletteDark = ["#7090ff", "#2ec4b9", "#f0a531", "#a48bff", "#f26d6d", "#9aa1b2", "#5bb8f5"];
 /** The chart palette for the theme on screen, for series that need a fixed colour per meaning. */
 export function usePalette() {
   return useResolvedTheme() === "dark" ? chartPaletteDark : chartPalette;

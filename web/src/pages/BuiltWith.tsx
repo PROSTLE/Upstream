@@ -2,7 +2,7 @@
 // Public, so anyone can read it. The live lines come from /api/public/stack, which holds counts and versions, nothing personal.
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { CalendarClock, Code2, Server, Table2, Terminal } from "lucide-react";
+import { CalendarClock, ChartNoAxesCombined, Code2, Server, Table2, Terminal } from "lucide-react";
 import { useApi } from "../api.ts";
 import { ago, plural } from "../format.ts";
 import { BrandIcon, Card, PayPalMark } from "../ui.tsx";
@@ -98,11 +98,32 @@ export function BuiltWith() {
         </div>
       </Card>
 
-      <Card title="AG Grid and AG Charts" sub="Community editions" icon={<Table2 size={17} />}>
+      <Card title="AG Studio: the Insights board" sub="Embedded analytics by AG Grid, with two widgets of our own" icon={<ChartNoAxesCombined size={17} />} tone="teal">
+        <div className="stack">
+          <p>
+            <b>Insights</b> puts the money and the attribution on one board. Its data comes from this server's own records through{" "}
+            <code>/api/studio/data</code>: sessions, each package's share by method, allocations, payouts, maintainers, the ledger and the money events, for
+            the person viewing only, and without any receiver, token or PayPal id.
+          </p>
+          <p>
+            Two widgets are ours. <b>Declared vs used</b> puts what an equal split of the dependency list would pay each package beside what Upstream pays it
+            from evidence, and tags packages the list pays but the agent never used. <b>Money trail</b> shows each maintainer's money as held, sent and paid,
+            with PayPal's own status. Click either and the whole board filters. Both describe themselves to Studio's agents.
+          </p>
+          <p className="muted small">
+            Themed from the app's own colours, fonts and chart palette, light and dark. Visitors can rearrange the board; the layout stays in their browser.
+            Code: <code>server/src/studio/</code>, <code>web/src/insights/</code>.
+          </p>
+          <Where items={[{ to: "/insights", label: "Insights" }]} />
+        </div>
+      </Card>
+
+      <Card title="AG Grid and AG Charts" sub="In every table and chart of the app" icon={<Table2 size={17} />}>
         <div className="stack">
           <p>
             Every table of records is an AG Grid, sortable, filterable and resizable, and every comparison is an AG Chart. Both share one themed wrapper, follow
-            the app's theme, and load only on the pages that use them.
+            the app's theme, and load only on the pages that use them. The app's own pages use the Community editions; the Insights board runs the Enterprise
+            editions that come with AG Studio.
           </p>
           <Where
             items={[

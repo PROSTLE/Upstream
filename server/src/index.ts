@@ -35,6 +35,8 @@ import {
 } from "./claims.ts";
 import { currentSubscription, startSubscription, syncSubscription } from "./funding.ts";
 import { ledgerEntries, poolSummary } from "./ledger.ts";
+import { studioData } from "./studio/data.ts";
+import { ledgerTotals } from "./studio/totals.ts";
 import { PayPalError, PayPalNotConfigured, runAsUser } from "./paypal/client.ts";
 import { ensureProductAndPlan, activePlanId } from "./paypal/subscriptions.ts";
 import { issueStatement, listStatements } from "./paypal/statements.ts";
@@ -754,6 +756,18 @@ app.get("/api/ledger", memberRead, (req, res) => {
 const sseEvent = (e: { id: number }) => `id: ${e.id}\nevent: money\ndata: ${JSON.stringify(e)}\n\n`;
 
 // A stream of this person's money events. The backlog comes first, then "hello" with the current numbers, then events as they commit.
+// ---------- Insights (AG Studio) ----------
+// Read-only, scoped like /api/ledger: a signed-out visitor of the public demo sees the operator's space.
+app.get("/api/studio/data", memberRead, (req, res) => res.json(studioData(scope(req))));
+app.get("/api/studio/totals", memberRead, (req, res) => {
+  const q = (k: string) => (typeof req.query[k] === "string" && req.query[k] ? String(req.query[k]) : null);
+  try {
+    res.json(ledgerTotals(scope(req), (q("currency") ?? config.TITHE_CURRENCY).toUpperCase(), q("from"), q("to")));
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
 app.get("/api/money/stream", memberRead, (req, res) => {
   const userId = scope(req);
   res.status(200).set({ "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });

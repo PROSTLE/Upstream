@@ -1,0 +1,471 @@
+{
+  "selectedPageId": "money",
+  "pages": [
+    {
+      "id": "money",
+      "widgets": {
+        "kpi-in": {
+          "type": "value",
+          "dataMapping": {
+            "value": [
+              {
+                "id": "ledger.money_in",
+                "aggregation": "sum"
+              }
+            ]
+          },
+          "format": {
+            "title": {
+              "enabled": true,
+              "text": "Funds in"
+            },
+            "caption": {
+              "enabled": true,
+              "text": "Confirmed by PayPal"
+            }
+          }
+        },
+        "kpi-paid": {
+          "type": "value",
+          "dataMapping": {
+            "value": [
+              {
+                "id": "ledger.paid_out",
+                "aggregation": "sum"
+              }
+            ]
+          },
+          "format": {
+            "title": {
+              "enabled": true,
+              "text": "Paid out"
+            },
+            "caption": {
+              "enabled": true,
+              "text": "Sent to verified maintainers"
+            }
+          }
+        },
+        "kpi-held": {
+          "type": "value",
+          "dataMapping": {
+            "value": [
+              {
+                "id": "allocations.held_amount",
+                "aggregation": "sum"
+              }
+            ]
+          },
+          "format": {
+            "title": {
+              "enabled": true,
+              "text": "Held for unclaimed"
+            },
+            "caption": {
+              "enabled": true,
+              "text": "Waiting for a maintainer to verify"
+            }
+          }
+        },
+        "kpi-fees": {
+          "type": "value",
+          "dataMapping": {
+            "value": [
+              {
+                "id": "ledger.fees",
+                "aggregation": "sum"
+              }
+            ]
+          },
+          "format": {
+            "title": {
+              "enabled": true,
+              "text": "PayPal fees"
+            },
+            "caption": {
+              "enabled": true,
+              "text": "On money in and on payouts"
+            }
+          }
+        },
+        "by-month": {
+          "type": "column-chart-grouped",
+          "dataMapping": {
+            "categoryKey": [
+              {
+                "id": "calendar::month"
+              }
+            ],
+            "valueKey": [
+              {
+                "id": "ledger.money_in",
+                "aggregation": "sum"
+              },
+              {
+                "id": "ledger.paid_out",
+                "aggregation": "sum"
+              },
+              {
+                "id": "ledger.fees",
+                "aggregation": "sum"
+              }
+            ]
+          },
+          "format": {
+            "title": {
+              "enabled": true,
+              "text": "Money in and out by month"
+            },
+            "subtitle": {
+              "enabled": true,
+              "text": "PayPal-confirmed ledger entries"
+            },
+            "style": {
+              "theme": {
+                "common": {
+                  "legend": {
+                    "enabled": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "trail": {
+          "type": "money-trail",
+          "dataMapping": {
+            "repo": [
+              {
+                "id": "maintainers.repo"
+              }
+            ],
+            "held": [
+              {
+                "id": "allocations.held_amount",
+                "aggregation": "sum"
+              }
+            ],
+            "sent": [
+              {
+                "id": "allocations.sent_amount",
+                "aggregation": "sum"
+              }
+            ],
+            "paid": [
+              {
+                "id": "allocations.paid_amount",
+                "aggregation": "sum"
+              }
+            ],
+            "claim": [
+              {
+                "id": "maintainers.status",
+                "aggregation": "first"
+              }
+            ],
+            "paypal": [
+              {
+                "id": "maintainers.paypal_status",
+                "aggregation": "first"
+              }
+            ],
+            "expires": [
+              {
+                "id": "maintainers.hold_expires_at",
+                "aggregation": "first"
+              }
+            ]
+          },
+          "format": {
+            "style": {
+              "heading": "Money trail",
+              "maxRows": 8
+            },
+            "crossFilter": "highlight"
+          }
+        },
+        "payouts": {
+          "type": "grid",
+          "dataMapping": {
+            "cols": [
+              {
+                "id": "payouts.repo"
+              },
+              {
+                "id": "payouts.transaction_status"
+              },
+              {
+                "id": "payouts.status_changed_at"
+              },
+              {
+                "id": "payouts.amount",
+                "aggregation": "sum"
+              },
+              {
+                "id": "payouts.fee",
+                "aggregation": "sum"
+              }
+            ]
+          },
+          "sort": [
+            {
+              "field": {
+                "id": "payouts.status_changed_at"
+              },
+              "direction": "desc"
+            }
+          ],
+          "format": {
+            "title": {
+              "enabled": true,
+              "text": "Payouts"
+            },
+            "subtitle": {
+              "enabled": true,
+              "text": "One row per PayPal payout item, with PayPal's own status and fee"
+            }
+          }
+        }
+      },
+      "widgetLayout": {
+        "kpi-in": {
+          "xTrack": 0,
+          "yTrack": 0,
+          "xSpan": 6,
+          "ySpan": 6
+        },
+        "kpi-paid": {
+          "xTrack": 6,
+          "yTrack": 0,
+          "xSpan": 6,
+          "ySpan": 6
+        },
+        "kpi-held": {
+          "xTrack": 12,
+          "yTrack": 0,
+          "xSpan": 6,
+          "ySpan": 6
+        },
+        "kpi-fees": {
+          "xTrack": 18,
+          "yTrack": 0,
+          "xSpan": 6,
+          "ySpan": 6
+        },
+        "by-month": {
+          "xTrack": 0,
+          "yTrack": 6,
+          "xSpan": 13,
+          "ySpan": 18
+        },
+        "trail": {
+          "xTrack": 13,
+          "yTrack": 6,
+          "xSpan": 11,
+          "ySpan": 18
+        },
+        "payouts": {
+          "xTrack": 0,
+          "yTrack": 24,
+          "xSpan": 24,
+          "ySpan": 13
+        }
+      }
+    },
+    {
+      "id": "attribution",
+      "widgets": {
+        "dvu": {
+          "type": "declared-vs-used",
+          "dataMapping": {
+            "package": [
+              {
+                "id": "shares.package"
+              }
+            ],
+            "listed": [
+              {
+                "id": "shares.manifest_share",
+                "aggregation": "sum"
+              }
+            ],
+            "used": [
+              {
+                "id": "shares.llm_share",
+                "aggregation": "sum"
+              }
+            ],
+            "sessions": [
+              {
+                "id": "shares.session_id",
+                "aggregation": "countd"
+              }
+            ]
+          },
+          "format": {
+            "style": {
+              "heading": "Declared vs used",
+              "showNeverUsed": true,
+              "maxRows": 10
+            },
+            "crossFilter": "highlight"
+          }
+        },
+        "top-packages": {
+          "type": "bar-chart-grouped",
+          "dataMapping": {
+            "categoryKey": [
+              {
+                "id": "shares.package"
+              }
+            ],
+            "valueKey": [
+              {
+                "id": "shares.llm_share",
+                "aggregation": "sum"
+              }
+            ]
+          },
+          "sort": [
+            {
+              "field": {
+                "id": "shares.llm_share",
+                "aggregation": "sum"
+              },
+              "direction": "desc"
+            }
+          ],
+          "format": {
+            "title": {
+              "enabled": true,
+              "text": "Top packages by Upstream share"
+            },
+            "subtitle": {
+              "enabled": true,
+              "text": "Each session's share, added up across sessions"
+            }
+          }
+        },
+        "alloc-pivot": {
+          "type": "pivot-grid",
+          "dataMapping": {
+            "rows": [
+              {
+                "id": "allocations.package"
+              }
+            ],
+            "columns": [
+              {
+                "id": "calendar::month"
+              }
+            ],
+            "values": [
+              {
+                "id": "allocations.amount",
+                "aggregation": "sum"
+              }
+            ]
+          },
+          "format": {
+            "title": {
+              "enabled": true,
+              "text": "Earmarked by package and month"
+            },
+            "subtitle": {
+              "enabled": true,
+              "text": "Allocations from payout runs"
+            }
+          }
+        },
+        "sessions": {
+          "type": "grid",
+          "dataMapping": {
+            "cols": [
+              {
+                "id": "sessions.project"
+              },
+              {
+                "id": "sessions.started_at"
+              },
+              {
+                "id": "sessions.status"
+              },
+              {
+                "id": "sessions.evidence_count",
+                "aggregation": "sum"
+              },
+              {
+                "id": "sessions.packages_used",
+                "aggregation": "sum"
+              }
+            ]
+          },
+          "sort": [
+            {
+              "field": {
+                "id": "sessions.started_at"
+              },
+              "direction": "desc"
+            }
+          ],
+          "format": {
+            "title": {
+              "enabled": true,
+              "text": "Coding sessions"
+            },
+            "subtitle": {
+              "enabled": true,
+              "text": "Recorded by the hook, reviewed by Muse Spark"
+            }
+          }
+        }
+      },
+      "filter": {
+        "widget": {
+          "dvu": [
+            {
+              "field": {
+                "id": "shares.comparable"
+              },
+              "model": {
+                "operator": "isTrue"
+              }
+            }
+          ]
+        }
+      },
+      "widgetLayout": {
+        "dvu": {
+          "xTrack": 0,
+          "yTrack": 0,
+          "xSpan": 12,
+          "ySpan": 22
+        },
+        "top-packages": {
+          "xTrack": 12,
+          "yTrack": 0,
+          "xSpan": 12,
+          "ySpan": 22
+        },
+        "alloc-pivot": {
+          "xTrack": 0,
+          "yTrack": 22,
+          "xSpan": 12,
+          "ySpan": 16
+        },
+        "sessions": {
+          "xTrack": 12,
+          "yTrack": 22,
+          "xSpan": 12,
+          "ySpan": 16
+        }
+      }
+    }
+  ],
+  "panels": {
+    "filters": {
+      "collapsed": true
+    }
+  },
+  "version": "3.1.0"
+}
