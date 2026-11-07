@@ -2,29 +2,39 @@ import { createContext, useCallback, useContext, useEffect, useId, useRef, useSt
 import { siGithub, siNpm, siPypi, siClaude, siMeta } from "simple-icons";
 import {
   AlertTriangle, BookOpen, Check, CheckCircle2, CircleDashed, Code2, Copy, Download, FileSearch, FileCode2, Globe, KeyRound, Loader2,
-  PackagePlus, Search, Sparkles, Terminal, X, XCircle,
+  PackagePlus, Search, Sparkles, Terminal, Upload, X, XCircle,
 } from "lucide-react";
 import { registerTokenPrompt, setAdminToken } from "./api.ts";
 
 
 // ---------- brand ----------
 
+/** An arrow rising out of two streams. Same shapes and colours as scripts/icons.mjs, which renders the favicon and app icons. */
 export function Logo({ size = 30 }: { size?: number }) {
   const id = useId();
+  const g = `${id}g`;
+  const l = `${id}l`;
+  // Small sizes get a thicker stroke so the lines stay crisp.
+  const stroke = size <= 24 ? 2.7 : 2.4;
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
       <defs>
-        <linearGradient id={id} x1="0" y1="1" x2="1" y2="0">
-          <stop offset="0" stopColor="#2f5bea" />
-          <stop offset="1" stopColor="#11a39c" />
+        <linearGradient id={g} x1="2" y1="30" x2="30" y2="2" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#2b4fe0" />
+          <stop offset=".55" stopColor="#1f7fc4" />
+          <stop offset="1" stopColor="#12a89e" />
+        </linearGradient>
+        <linearGradient id={l} x1="16" y1="0" x2="16" y2="14" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#fff" stopOpacity=".1" />
+          <stop offset="1" stopColor="#fff" stopOpacity="0" />
         </linearGradient>
       </defs>
-      <rect width="32" height="32" rx="9" fill={`url(#${CSS.escape(id)})`} />
-      {/* Same geometry as scripts/icons.mjs, which renders the favicon and app icons. */}
-      <g transform="translate(0 1.3)">
-        <path d="M8 22c3.2-1.4 4.6-4.4 8-4.4s4.8 3 8 4.4" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" opacity=".55" />
-        <path d="M8 16.5c3.2-1.4 4.6-4.4 8-4.4s4.8 3 8 4.4" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" />
-        <path d="M16 6.5v5.6M13.3 9l2.7-2.7L18.7 9" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+      <rect width="32" height="32" rx="9" fill={`url(#${CSS.escape(g)})`} />
+      <rect width="32" height="32" rx="9" fill={`url(#${CSS.escape(l)})`} />
+      <g fill="none" stroke="#fff" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round">
+        <path d="M7.6 23.4C10.6 22.2 12.4 19.2 16 19.2s5.4 3 8.4 4.2" strokeOpacity=".5" />
+        <path d="M7.6 17.6C10.6 16.4 12.4 13.4 16 13.4s5.4 3 8.4 4.2" />
+        <path d="M16 13.4V6.6M12.7 9.7 16 6.4l3.3 3.3" />
       </g>
     </svg>
   );
@@ -231,6 +241,38 @@ export function CheckRow({ ok, label, detail }: { ok: boolean | null; label: Rea
   );
 }
 
+/** A file picker you can also drop files on. The real input stays focusable, so it works from the keyboard. */
+export function DropZone({ label, hint, accept, multiple = true, disabled, onFiles }: { label: ReactNode; hint?: ReactNode; accept?: string; multiple?: boolean; disabled?: boolean; onFiles: (files: File[]) => void }) {
+  const [over, setOver] = useState(false);
+  return (
+    <label
+      className={`dropzone${over ? " over" : ""}${disabled ? " disabled" : ""}`}
+      onDragOver={(e) => { e.preventDefault(); if (!disabled) setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setOver(false);
+        if (!disabled && e.dataTransfer.files.length) onFiles([...e.dataTransfer.files]);
+      }}
+    >
+      <input
+        type="file"
+        className="sr-only"
+        accept={accept}
+        multiple={multiple}
+        disabled={disabled}
+        onChange={(e) => {
+          if (e.target.files?.length) onFiles([...e.target.files]);
+          e.target.value = "";
+        }}
+      />
+      <Upload size={20} aria-hidden />
+      <strong>{label}</strong>
+      {hint && <span className="muted small">{hint}</span>}
+    </label>
+  );
+}
+
 export function Kbd({ children }: { children: ReactNode }) {
   return <kbd className="kbd">{children}</kbd>;
 }
@@ -393,13 +435,13 @@ export function ActionButton({ onRun, children, className = "btn", disabled, tit
 
 // ---------- toasts ----------
 
-type Toast = { id: number; text: string; kind: "info" | "error" };
-const ToastCtx = createContext<(text: string, kind?: "info" | "error") => void>(() => {});
+type Toast = { id: number; text: ReactNode; kind: "info" | "error" };
+const ToastCtx = createContext<(text: ReactNode, kind?: "info" | "error") => void>(() => {});
 export const useToast = () => useContext(ToastCtx);
 
 export function Providers({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const push = useCallback((text: string, kind: "info" | "error" = "info") => {
+  const push = useCallback((text: ReactNode, kind: "info" | "error" = "info") => {
     const id = Date.now() + Math.random();
     setToasts((t) => [...t, { id, text, kind }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "error" ? 9000 : 4500);

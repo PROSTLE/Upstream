@@ -44,6 +44,8 @@ async function paypal() {
   report("ok", "PayPal OAuth", `${config.PAYPAL_ENV} token issued for app ${body.app_id ?? "(no app_id in response)"}`);
   const scopes = String(body.scope ?? "").split(/\s+/).filter((s) => /payout|subscription|billing/i.test(s));
   report("ok", "PayPal scopes", scopes.length ? scopes.join(", ") : "none mentioning payouts or billing; if a call fails with NOT_AUTHORIZED, enable the feature for this app in the PayPal developer dashboard");
+  if (/invoicing/i.test(String(body.scope ?? ""))) report("ok", "PayPal Invoicing", "this app can issue monthly statements");
+  else report("warn", "PayPal Invoicing", "this app has no invoicing permission, so monthly statements will fail. Turn on Invoicing for the app in the PayPal Developer Dashboard (Apps & Credentials, your app, Features)");
   const plans = await getJson(`${config.PAYPAL_API_BASE}/v1/billing/plans`, { headers: { Authorization: `Bearer ${body.access_token}` } });
   if (plans.res.ok) report("ok", "PayPal Subscriptions", `plans readable (${(plans.body?.plans ?? []).length} on the first page)`);
   else report("fail", "PayPal Subscriptions", `GET /v1/billing/plans returned ${plans.res.status} ${plans.body?.name ?? ""} (debug id ${plans.res.headers.get("paypal-debug-id") ?? "n/a"})`);

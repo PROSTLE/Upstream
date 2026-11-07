@@ -1,12 +1,14 @@
 // Settlement = turn attributed sessions into one guarded, idempotent PayPal Payouts batch.
 import { activeRun } from "./attribution/run.ts";
 import { markReceiverUnclaimed, payableClaim } from "./claims.ts";
+import { cleanupExpiredChecks } from "./check.ts";
 import { config } from "./config.ts";
-import { db, json, newId, now, tx } from "./db.ts";
+import { db, isCheckUser, json, newId, now, tx } from "./db.ts";
 import { syncKnownSubscriptions } from "./funding.ts";
 import { syncOpenTopups } from "./topups.ts";
 import { book, poolSummary } from "./ledger.ts";
-import { fromMinor, splitByWeights, toMinor } from "./money.ts";
+import { formatMoney, fromMinor, splitByWeights, toMinor } from "./money.ts";
+import { edgeFor, moneyContext, recordMoneyEvent } from "./money/flow.ts";
 import { PayPalError, runAsUser } from "./paypal/client.ts";
 import {
   cancelPayoutItem,
@@ -25,10 +27,30 @@ export interface PolicyCheck {
 
 const days = (n: number) => n * 24 * 3600 * 1000;
 
+/** What one payout item is expected to cost: the last fee PayPal reported in this currency, otherwise the configured estimate. */
+export function feeEstimate(currency: string): { minor: number; source: "paypal" | "default" } {
+  const reported = db()
+    .prepare("SELECT fee_minor FROM payout_items WHERE currency = ? AND fee_minor > 0 ORDER BY COALESCE(status_changed_at, updated_at) DESC, rowid DESC LIMIT 1")
+    .get(currency) as { fee_minor: number } | undefined;
+  return reported ? { minor: reported.fee_minor, source: "paypal" } : { minor: toMinor(config.POLICY_PAYOUT_FEE_ESTIMATE, currency), source: "default" };
+}
+
+/** The smallest payout worth sending, in minor units: large enough that the fee stays within POLICY_MAX_FEE_SHARE, and within the min and max policy. */
+export function payoutThreshold(currency: string, fee = feeEstimate(currency).minor): number {
+  const forFeeShare = config.POLICY_MAX_FEE_SHARE > 0 ? Math.ceil(fee / config.POLICY_MAX_FEE_SHARE - 1e-9) : Number.POSITIVE_INFINITY;
+  return Math.min(toMinor(config.POLICY_MAX_PAYOUT, currency), Math.max(toMinor(config.POLICY_MIN_PAYOUT, currency), forFeeShare));
+}
+
 function releaseExpiredReservations(currency: string, userId: string) {
+  const at = now();
+  const expired = db().prepare("SELECT COALESCE(SUM(amount_minor),0) AS t FROM allocations WHERE currency = ? AND user_id = ? AND status = 'reserved' AND expires_at IS NOT NULL AND expires_at < ?").get(currency, userId, at) as { t: number };
   db()
     .prepare("UPDATE allocations SET status = 'released', updated_at = ? WHERE currency = ? AND user_id = ? AND status = 'reserved' AND expires_at IS NOT NULL AND expires_at < ?")
-    .run(now(), currency, userId, now());
+    .run(at, currency, userId, at);
+  if (Number(expired.t) > 0) {
+    const edge = edgeFor({ type: "earmark", action: "release", amountMinor: Number(expired.t), currency });
+    recordMoneyEvent({ userId, dedupeKey: `earmark:release:${userId}:${at.slice(0, 16)}`, type: "earmark", at, amountMinor: Number(expired.t), currency, trigger: { via: "none" }, ...edge! });
+  }
 }
 
 export function discardDrafts(userId: string) {
@@ -44,6 +66,7 @@ export function discardDrafts(userId: string) {
 
 /** Plans one person's payout from their own funds, sessions and held money. */
 export function planSettlement(userId: string): { settlementId: string } {
+  if (isCheckUser(userId)) throw new Error("A public check can't be paid out.");
   const currency = config.TITHE_CURRENCY;
   const open = db().prepare("SELECT id, status FROM settlements WHERE status IN ('approved','sending') AND user_id = ?").get(userId) as
     | { id: string; status: string }
@@ -54,9 +77,11 @@ export function planSettlement(userId: string): { settlementId: string } {
 
   const pool = poolSummary(currency, userId);
   const feeRate = config.POLICY_PAYOUT_FEE_RESERVE;
-  const minPayout = toMinor(config.POLICY_MIN_PAYOUT, currency);
+  const fee = feeEstimate(currency);
+  const threshold = payoutThreshold(currency, fee.minor);
   const maxPayout = toMinor(config.POLICY_MAX_PAYOUT, currency);
-  const distributable = Math.floor(pool.available / (1 + feeRate));
+  // Every item sent is at least the threshold, so its fee is at most POLICY_MAX_FEE_SHARE of it. Keeping that much back means the per-item fee reserve always fits.
+  const distributable = Math.floor(pool.available / (1 + Math.max(feeRate, config.POLICY_MAX_FEE_SHARE)));
 
   const sessions = db()
     .prepare("SELECT id FROM sessions WHERE status = 'attributed' AND allocated_settlement_id IS NULL AND user_id = ? ORDER BY started_at")
@@ -85,6 +110,7 @@ export function planSettlement(userId: string): { settlementId: string } {
   const settlementId = newId("stl");
   const checks: PolicyCheck[] = [];
   const unpayable: { package: string; reason: string; amount_minor: number }[] = [];
+  const heldForFees: { repo: string; held_minor: number; threshold_minor: number; fee_estimate_minor: number; fee_share_if_paid_now: number; estimate_source: "paypal" | "default" }[] = [];
 
   type RepoBucket = { repo: string; fresh: { e: (typeof entries)[number]; amount: number }[] };
   const byRepo = new Map<string, RepoBucket>();
@@ -157,9 +183,10 @@ export function planSettlement(userId: string): { settlementId: string } {
           unpayable.push({ package: `${f.e.ecosystem}:${f.e.name}`, reason: `per-item cap ${config.POLICY_MAX_PAYOUT} ${currency} reached; excess stays in the pool`, amount_minor: f.amount - fit });
         }
       }
-      if (total < minPayout) {
+      if (total < threshold) {
         // Too small to send: hold it for this maintainer until it grows.
         for (const id of planned) db().prepare("UPDATE allocations SET target = 'reserve', expires_at = ? WHERE id = ?").run(expires, id);
+        if (total > 0) heldForFees.push({ repo: bucket.repo, held_minor: total, threshold_minor: threshold, fee_estimate_minor: fee.minor, fee_share_if_paid_now: fee.minor / total, estimate_source: fee.source });
         continue;
       }
       if (total <= 0) continue;
@@ -176,7 +203,7 @@ export function planSettlement(userId: string): { settlementId: string } {
     }
 
     const itemsTotal = items.reduce((a, i) => a + i.amount, 0);
-    const feeReserve = Math.ceil(itemsTotal * feeRate);
+    const feeReserve = items.reduce((a, i) => a + Math.max(Math.ceil(i.amount * feeRate), fee.minor), 0);
     const plannedReserve = (db().prepare("SELECT COALESCE(SUM(amount_minor),0) AS t FROM allocations WHERE settlement_id = ? AND target = 'reserve'").get(settlementId) as { t: number }).t;
     const newMoney = itemsTotal - items.reduce((a, i) => a + i.reservedIncluded.reduce((s, id) => s + (reservedRows.find((r) => r.id === id)?.amount_minor ?? 0), 0), 0);
 
@@ -186,7 +213,12 @@ export function planSettlement(userId: string): { settlementId: string } {
       { id: "budget", label: "Within budget incl. fee reserve", ok: newMoney + Number(plannedReserve) + feeReserve <= pool.headroom, detail: pool.headroom < 0 ? `Held and in-flight money exceeds the PayPal-confirmed balance by ${fromMinor(-pool.headroom, currency)}; add funds before paying out.` : `New allocations ${fromMinor(newMoney + Number(plannedReserve), currency)} + fee reserve ${fromMinor(feeReserve, currency)} ≤ available ${fromMinor(pool.headroom, currency)}.` },
       { id: "receivers", label: "Every receiver is a verified maintainer", ok: items.every((i) => payableClaim(i.repo)?.id === i.claim_id), detail: `${items.length} item(s), each tied to a verified claim.` },
       { id: "item_cap", label: `Each item ≤ ${config.POLICY_MAX_PAYOUT} ${currency}`, ok: items.every((i) => i.amount <= maxPayout), detail: "Per-item maximum enforced in code." },
-      { id: "item_min", label: `Each item ≥ ${config.POLICY_MIN_PAYOUT} ${currency}`, ok: items.every((i) => i.amount >= minPayout), detail: "Smaller amounts carry over for that maintainer." },
+      {
+        id: "item_min",
+        label: `Each item ≥ ${formatMoney(threshold, currency)}, so PayPal's fee stays ≤ ${(config.POLICY_MAX_FEE_SHARE * 100).toFixed(0)}%`,
+        ok: items.every((i) => i.amount >= threshold),
+        detail: `PayPal's fee per item: ${formatMoney(fee.minor, currency)} (${fee.source === "paypal" ? "the last fee PayPal reported" : "the default, until PayPal reports one"}). Smaller amounts carry over for that maintainer.`,
+      },
       {
         id: "evidence",
         label: "Every paid package cites session evidence",
@@ -214,13 +246,18 @@ export function planSettlement(userId: string): { settlementId: string } {
           checks,
           sessions: runs.map((r) => r.session),
           unpayable,
+          held_for_fees: heldForFees,
           leftover_share: leftover,
           distributable_minor: distributable,
           params: {
             max_package_share: config.POLICY_MAX_PACKAGE_SHARE,
             min_payout: config.POLICY_MIN_PAYOUT,
+            payout_threshold: fromMinor(threshold, currency),
             max_payout: config.POLICY_MAX_PAYOUT,
             fee_reserve: feeRate,
+            max_fee_share: config.POLICY_MAX_FEE_SHARE,
+            fee_estimate: fromMinor(fee.minor, currency),
+            fee_estimate_source: fee.source,
             reserve_days: config.POLICY_RESERVE_DAYS,
           },
         }),
@@ -293,7 +330,22 @@ export function approveSettlement(settlementId: string) {
     db()
       .prepare("UPDATE settlements SET status = ?, approved_at = ?, request_json = ? WHERE id = ?")
       .run(hasItems ? "approved" : "held", now(), hasItems ? JSON.stringify(buildRequest(settlementId)) : null, settlementId);
+    if (s.reserved_minor > 0) recordEarmark(settlementId, s.reserved_minor, s.currency, s.user_id, now(), false);
   });
+}
+
+/** Money set aside by an approved run. Only a line in Upstream's own records: PayPal isn't involved. */
+export function recordEarmark(settlementId: string, amountMinor: number, currency: string, userId: string, at: string, backfilled: boolean) {
+  const repos = (db().prepare("SELECT DISTINCT repo FROM allocations WHERE settlement_id = ? AND target = 'reserve' AND repo IS NOT NULL").all(settlementId) as { repo: string }[]).map((r) => r.repo);
+  const edge = edgeFor({ type: "earmark", action: "approve", amountMinor, currency, repos, forFees: repos.length === 1 && Boolean(payableClaim(repos[0])) });
+  recordMoneyEvent({ userId, dedupeKey: `earmark:approve:${settlementId}`, type: "earmark", at, amountMinor, currency, settlementId, repo: repos.length === 1 ? repos[0] : null, trigger: { via: "none" }, backfilled, ...edge! });
+}
+
+/** PayPal accepted this batch, so the money is now on PayPal's side. */
+function recordBatchAccepted(settlementId: string, payoutBatchId: string, currency: string, userId: string) {
+  const items = db().prepare("SELECT COUNT(*) AS n, COALESCE(SUM(amount_minor),0) AS t FROM payout_items WHERE settlement_id = ?").get(settlementId) as { n: number; t: number };
+  const edge = edgeFor({ type: "batch", amountMinor: Number(items.t), currency, batchId: payoutBatchId, payments: Number(items.n) });
+  recordMoneyEvent({ userId, dedupeKey: `batch:${settlementId}`, type: "batch", at: now(), amountMinor: Number(items.t), currency, settlementId, paypalIds: { payout_batch_id: payoutBatchId }, trigger: moneyContext.getStore() ?? { via: "api", action: "send payout batch" }, ...edge! });
 }
 
 /** Locally idempotent; PayPal-side idempotency comes from sender_batch_id + PayPal-Request-Id. */
@@ -310,6 +362,7 @@ export async function executeSettlement(settlementId: string) {
     db()
       .prepare("UPDATE settlements SET status = 'sent', payout_batch_id = ?, batch_status = ?, sent_at = ?, error_json = NULL WHERE id = ?")
       .run(h.payout_batch_id, h.batch_status, now(), settlementId);
+    recordBatchAccepted(settlementId, h.payout_batch_id, s.currency, s.user_id);
     return { alreadySent: false, payout_batch_id: h.payout_batch_id, batch_status: h.batch_status, debug_id: res.debugId };
   } catch (err) {
     if (err instanceof PayPalError && err.status < 500) {
@@ -318,6 +371,7 @@ export async function executeSettlement(settlementId: string) {
       const original = href?.match(/\/v1\/payments\/payouts\/([^/?]+)/)?.[1];
       if (original) {
         db().prepare("UPDATE settlements SET status = 'sent', payout_batch_id = ?, sent_at = COALESCE(sent_at, ?), error_json = ? WHERE id = ?").run(original, now(), JSON.stringify({ recovered_from: err.body }), settlementId);
+        recordBatchAccepted(settlementId, original, s.currency, s.user_id);
         return { alreadySent: true, payout_batch_id: original, recovered: true };
       }
       tx(() => {
@@ -370,6 +424,27 @@ export function applyPayoutItem(item: PayoutItem, source: "webhook" | "api_sync"
       )
       .run(item.payout_item_id, item.transaction_id ?? null, status ?? null, fee, item.errors ? JSON.stringify(item.errors) : null, now(), status ?? "", now(), row.sender_item_id);
 
+    // Before the fee is booked, so the event list reads in the order things happened: paid, then PayPal's fee.
+    if (status && status !== row.transaction_status) {
+      const edge = edgeFor({ type: "payout_status", status, previous: row.transaction_status, amountMinor: row.amount_minor, currency: row.currency, repo: row.repo });
+      recordMoneyEvent({
+        userId,
+        dedupeKey: `payout:${row.sender_item_id}:${status}`,
+        type: "payout_status",
+        at: item.time_processed ?? now(),
+        amountMinor: row.amount_minor,
+        currency: row.currency,
+        refType: "payout_item",
+        refId: row.sender_item_id,
+        settlementId: row.settlement_id,
+        repo: row.repo,
+        statusFrom: row.transaction_status,
+        statusTo: status,
+        paypalIds: { payout_item_id: item.payout_item_id, transaction_id: item.transaction_id, payout_batch_id: item.payout_batch_id },
+        ...edge!,
+      });
+    }
+
     if (status && SENT_STATES.has(status)) {
       book({ dedupeKey: `sent:${row.sender_item_id}`, kind: "PAYOUT_SENT", amountMinor: -row.amount_minor, currency: row.currency, refType: "payout_item", refId: row.sender_item_id, memo: `Payout to ${row.repo}`, source, userId });
       if (fee && fee > 0) {
@@ -421,7 +496,12 @@ export async function cancelUnclaimed(senderItemId: string, opts: { manual: bool
 }
 
 /** Runs on an interval: sync open batches, cancel stale UNCLAIMED items per policy. */
-export async function housekeeping() {
+export function housekeeping() {
+  return moneyContext.run({ via: "api", action: "scheduled sync" }, runHousekeeping);
+}
+
+async function runHousekeeping() {
+  cleanupExpiredChecks();
   const open = db()
     .prepare(
       `SELECT id FROM settlements WHERE status = 'sent' AND payout_batch_id IS NOT NULL AND (COALESCE(batch_status,'') NOT IN ('SUCCESS','DENIED','CANCELED')

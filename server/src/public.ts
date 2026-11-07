@@ -3,8 +3,8 @@
 import { activeRun } from "./attribution/run.ts";
 import { payableClaim } from "./claims.ts";
 import { config } from "./config.ts";
-import { db, json } from "./db.ts";
-import { fromMinor } from "./money.ts";
+import { db, json, NOT_CHECK_USER, now } from "./db.ts";
+import { formatMoney, fromMinor } from "./money.ts";
 
 export interface RepoSummary {
   repo: string;
@@ -37,7 +37,7 @@ function reliedSessions(pkgs: { ecosystem: string; name: string }[], userId?: st
   const keys = new Set(pkgs.map((p) => `${p.ecosystem}:${p.name}`));
   if (!keys.size) return [];
   const sessions = db()
-    .prepare(`SELECT id, started_at, last_event_at FROM sessions WHERE status = 'attributed'${userId ? " AND user_id = ?" : ""} ORDER BY started_at`)
+    .prepare(`SELECT id, started_at, last_event_at FROM sessions WHERE status = 'attributed' AND ${userId ? "user_id = ?" : NOT_CHECK_USER} ORDER BY started_at`)
     .all(...(userId ? [userId] : [])) as { id: string; started_at: string; last_event_at: string }[];
   const out: { id: string; last_event_at: string; weights: ReturnType<typeof weightsFor> }[] = [];
   for (const s of sessions) {
@@ -67,7 +67,7 @@ function weightsFor(sessionId: string, keys: Set<string>) {
 
 function allocationSums(repo: string, currency: string) {
   const rows = db()
-    .prepare("SELECT status, COALESCE(SUM(amount_minor),0) AS t FROM allocations WHERE repo = ? AND currency = ? AND status IN ('reserved','in_batch','paid') GROUP BY status")
+    .prepare(`SELECT status, COALESCE(SUM(amount_minor),0) AS t FROM allocations WHERE repo = ? AND currency = ? AND status IN ('reserved','in_batch','paid') AND ${NOT_CHECK_USER} GROUP BY status`)
     .all(repo, currency) as { status: string; t: number }[];
   const s = (k: string) => Number(rows.find((r) => r.status === k)?.t ?? 0);
   return { reserved: s("reserved"), inBatch: s("in_batch"), paid: s("paid") };
@@ -120,7 +120,7 @@ export function repoSummary(repo: string): RepoSummary | undefined {
 /** Repos with money held or paid, biggest first: the claim page shows maintainers what is waiting. */
 export function reposWithMoney(limit = 50): RepoSummary[] {
   const rows = db()
-    .prepare("SELECT DISTINCT repo FROM allocations WHERE repo IS NOT NULL AND currency = ? AND status IN ('reserved','in_batch','paid')")
+    .prepare(`SELECT DISTINCT repo FROM allocations WHERE repo IS NOT NULL AND currency = ? AND status IN ('reserved','in_batch','paid') AND ${NOT_CHECK_USER}`)
     .all(config.TITHE_CURRENCY) as { repo: string }[];
   return rows
     .map((r) => repoSummary(r.repo))
@@ -135,7 +135,7 @@ export function reposWithMoney(limit = 50): RepoSummary[] {
  */
 export function publicActivity(limit = 4) {
   const currency = config.TITHE_CURRENCY;
-  const sessions = db().prepare("SELECT id FROM sessions WHERE status = 'attributed' ORDER BY last_event_at DESC").all() as { id: string }[];
+  const sessions = db().prepare(`SELECT id FROM sessions WHERE status = 'attributed' AND ${NOT_CHECK_USER} ORDER BY last_event_at DESC`).all() as { id: string }[];
   const credited = new Map<string, { ecosystem: string; name: string; classification: string; signals: string[] }>();
   const seen = new Set<string>();
   let reviewed = 0;
@@ -151,7 +151,7 @@ export function publicActivity(limit = 4) {
       credited.set(key, { ecosystem: w.ecosystem, name: w.name, classification: w.classification, signals: Object.keys(candidate?.counts ?? {}) });
     }
   }
-  const sum = (status: string) => Number((db().prepare("SELECT COALESCE(SUM(amount_minor),0) AS t FROM allocations WHERE status = ? AND currency = ?").get(status, currency) as { t: number }).t);
+  const sum = (status: string) => Number((db().prepare(`SELECT COALESCE(SUM(amount_minor),0) AS t FROM allocations WHERE status = ? AND currency = ? AND ${NOT_CHECK_USER}`).get(status, currency) as { t: number }).t);
   return {
     currency,
     sessions_reviewed: reviewed,
@@ -217,6 +217,55 @@ export function moneyTrail(repo: string, userId: string) {
   return { repo, currency, summary: repoSummary(repo) ?? null, allocations, sessions, payout_items: items };
 }
 
+/**
+ * What an invitation to a maintainer says, from this person's own records: the same data as the money trail, reduced to counts.
+ * Only repos with money held and no verified maintainer have anything to invite anyone to.
+ */
+export function inviteDetails(repo: string, userId: string) {
+  const currency = config.TITHE_CURRENCY;
+  const held = db()
+    .prepare("SELECT amount_minor, package, session_ids_json, expires_at FROM allocations WHERE repo = ? AND user_id = ? AND status = 'reserved' AND currency = ? ORDER BY expires_at")
+    .all(repo, userId, currency) as { amount_minor: number; package: string; session_ids_json: string; expires_at: string | null }[];
+  if (!held.length) return { error: "You have no money held for this repository." as const };
+  if (payableClaim(repo)) return { error: "This repository already has a verified maintainer." as const };
+  const packages = [...new Set(held.map((a) => a.package))].sort();
+  const sessionIds = new Set(held.flatMap((a) => json<string[]>(a.session_ids_json, [])));
+  // Counted from the runs that gave these packages a share, so every number in the message can be traced.
+  const evidence: Record<string, number> = {};
+  let usageLines = 0;
+  for (const id of sessionIds) {
+    const run = activeRun(id);
+    for (const c of run?.candidates.candidates ?? []) {
+      if (!packages.includes(c.name)) continue;
+      usageLines += c.usage_lines;
+      for (const [kind, n] of Object.entries(c.counts)) evidence[kind] = (evidence[kind] ?? 0) + n;
+    }
+  }
+  const invited = db().prepare("SELECT created_at, channel FROM invites WHERE repo = ? AND user_id = ?").get(repo, userId) as { created_at: string; channel: string } | undefined;
+  return {
+    repo,
+    held: fromMinor(held.reduce((a, r) => a + r.amount_minor, 0), currency),
+    currency,
+    expires_at: held.map((a) => a.expires_at).filter((e): e is string => Boolean(e)).sort()[0] ?? null,
+    sessions: sessionIds.size,
+    packages,
+    evidence,
+    usage_lines: usageLines,
+    claim_url: `${config.PUBLIC_BASE_URL}/claim?repo=${repo.replace("github.com/", "")}`,
+    invited: invited ?? null,
+  };
+}
+
+const INVITE_CHANNELS = new Set(["github_issue", "copied_text", "copied_link"]);
+
+/** Remembers that this person invited the maintainer. Nothing is posted anywhere: they did it themselves. */
+export function recordInvite(repo: string, userId: string, channel: unknown) {
+  if (typeof channel !== "string" || !INVITE_CHANNELS.has(channel)) throw new Error("Unknown invite channel.");
+  db()
+    .prepare("INSERT INTO invites(repo, user_id, created_at, channel) VALUES (?,?,?,?) ON CONFLICT(repo, user_id) DO UPDATE SET created_at = excluded.created_at, channel = excluded.channel")
+    .run(repo, userId, now(), channel);
+}
+
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 // Approximate Verdana 11px advance widths, the convention README badges use, so the text fits its box.
@@ -226,10 +275,6 @@ function textWidth(s: string): number {
   return Math.ceil(w);
 }
 
-function formatAmount(minorValue: number, currency: string): string {
-  return new Intl.NumberFormat("en", { style: "currency", currency }).format(Number(fromMinor(minorValue, currency)));
-}
-
 /** A shields-style SVG for a repo's README. Unknown repos get a neutral "not yet used" badge, never an error. */
 export function badgeSvg(summary: RepoSummary | undefined): string {
   const label = config.BRAND_NAME.toLowerCase();
@@ -237,10 +282,10 @@ export function badgeSvg(summary: RepoSummary | undefined): string {
   let color = "#7c8597";
   if (summary) {
     if (summary.held_minor > 0 && summary.claim.status !== "verified") {
-      message = `${formatAmount(summary.held_minor, summary.currency)} waiting · claim it`;
+      message = `${formatMoney(summary.held_minor, summary.currency)} waiting · claim it`;
       color = "#c27803";
     } else if (summary.paid_minor > 0) {
-      message = `${formatAmount(summary.paid_minor, summary.currency)} paid by agents`;
+      message = `${formatMoney(summary.paid_minor, summary.currency)} paid by agents`;
       color = "#15803d";
     } else if (summary.sessions_relied > 0) {
       message = `relied on in ${summary.sessions_relied} agent session${summary.sessions_relied === 1 ? "" : "s"}`;

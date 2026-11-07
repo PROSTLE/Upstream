@@ -54,6 +54,9 @@ const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s
 export function responseText(resp: unknown, max = 1500): string {
   if (typeof resp === "string") return clip(resp, max);
   if (!resp || typeof resp !== "object") return "";
+  // Claude Code's Read result is { file: { filePath, content, ... } }: a long filePath must not be taken for the contents.
+  const content = (resp as { file?: { content?: unknown } }).file?.content;
+  if (typeof content === "string") return clip(content, max);
   const stack: unknown[] = [resp];
   while (stack.length) {
     const v = stack.shift();

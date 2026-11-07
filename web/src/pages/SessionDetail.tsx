@@ -8,6 +8,7 @@ import { dateTime, duration, pct, plural } from "../format.ts";
 import { ActionButton, BrandIcon, Card, EVIDENCE, EcoIcon, Empty, ErrorBox, EvidenceIcon, Loading, Modal, PageHead, Status, useCopy, useToast } from "../ui.tsx";
 import { Chart, useNeutralFill, usePalette } from "../data.tsx";
 import { useOverview } from "../overview.tsx";
+import { LeftoverNote, ShareBars, importanceShares, paidByRank } from "../weights.tsx";
 
 export function SessionDetail() {
   const { id = "" } = useParams();
@@ -25,7 +26,7 @@ function SessionView({ id }: { id: string }) {
   const { data: ov } = useOverview();
   const isOpen = data?.session?.status === "open";
   useEffect(() => setLive(Boolean(isOpen)), [isOpen]);
-  const [tabSel, setTab] = useState<"llm" | "baseline" | null>(null);
+  const [tabSel, setTab] = useState<"llm" | "baseline" | "manifest" | null>(null);
   const [raw, setRaw] = useState<any>(null);
   const [evPkg, setEvPkg] = useState<string>("");
   const [evKind, setEvKind] = useState<string>("");
@@ -33,8 +34,11 @@ function SessionView({ id }: { id: string }) {
   const runs = data?.runs ?? [];
   const llm = runs.find((r: any) => r.method === "llm");
   const base = runs.find((r: any) => r.method === "baseline");
+  const manifestRun = runs.find((r: any) => r.method === "manifest");
   const tab = tabSel ?? (llm || !base ? "llm" : "baseline");
-  const shown = tab === "llm" ? llm : base;
+  const shown = tab === "llm" ? llm : tab === "baseline" ? base : manifestRun;
+  // The receipt is about what a payout would do, and the comparison method is never paid.
+  const receiptRun = tab === "manifest" ? (llm ?? base) : shown;
   const set = data?.candidates;
   const evById = useMemo(() => new Map((set?.evidence ?? []).map((e: any) => [e.id, e])), [set]);
 
@@ -98,19 +102,29 @@ function SessionView({ id }: { id: string }) {
         <MiniStat icon={<CircleSlash size={15} />} label="Merely present" value={present.length} foot="In the manifest, no session evidence: never paid" />
       </div>
 
-      {shown && <Receipt run={shown} cands={cands} project={s.project} sessionId={id} />}
+      {s.source === "transcript" && runs.length === 0 && (
+        <div className="callout blue">
+          <FlaskConical size={16} color="var(--accent)" />
+          <div className="small"><strong>Label first, then run the review.</strong> Labels saved before any review count as blind on the AI accuracy page.</div>
+        </div>
+      )}
+
+      {receiptRun && <Receipt run={receiptRun} cands={cands} project={s.project} sessionId={id} maxShare={ov?.policy?.max_package_share} />}
+
+      <RelianceStrip cands={cands} run={shown} />
 
       <Card
         title="Who gets what"
-        sub={shown ? `${shown.method === "llm" ? `Muse Spark (${shown.model})` : "Import-count baseline"} · validated ${dateTime(shown.created_at)}${shown.is_active ? " · used for payouts" : ""}` : "Not attributed yet"}
+        sub={shown ? (shown.method === "manifest" ? `What funding by dependency list would pay · never paid, comparison only · ${dateTime(shown.created_at)}` : `${shown.method === "llm" ? `Muse Spark (${shown.model})` : "Import-count baseline"} · validated ${dateTime(shown.created_at)}${shown.is_active ? " · used for payouts" : ""}`) : "Not attributed yet"}
         icon={<Scale size={17} />}
         actions={
           <div className="row">
             <div className="tabs">
               <button className={`tab ${tab === "llm" ? "active" : ""}`} onClick={() => setTab("llm")}>Muse Spark</button>
               <button className={`tab ${tab === "baseline" ? "active" : ""}`} onClick={() => setTab("baseline")}>Baseline</button>
+              <button className={`tab ${tab === "manifest" ? "active" : ""}`} onClick={() => setTab("manifest")}>Dependency list (equal split)</button>
             </div>
-            {shown && !shown.is_active && !s.allocated_settlement_id && (
+            {shown && shown.method !== "manifest" && !shown.is_active && !s.allocated_settlement_id && (
               <ActionButton className="btn sm" onRun={async () => { await api(`/api/sessions/${id}/active-run`, { body: { run_id: shown.id }, admin: true }); toast("This attribution will be used for payouts."); await reload(); }}>
                 Use for payouts
               </ActionButton>
@@ -119,26 +133,34 @@ function SessionView({ id }: { id: string }) {
         }
       >
         {!shown ? (
-          <Empty icon={<Sparkles size={22} />} title={tab === "llm" ? "No Muse Spark review yet" : "No baseline yet"}>
-            Run the review: Muse Spark reads the evidence below and proposes weights with citations; code then drops anything uncited, hallucinated or merely present, and enforces the per-package cap from your policy.
-            {runs.length === 0 && cands.length > 0 && (
-              <> For the eval, label packages in “Your ground truth” first: labels saved before any attribution runs count as blind.</>
+          <Empty icon={<Sparkles size={22} />} title={tab === "llm" ? "No Muse Spark review yet" : tab === "baseline" ? "No baseline yet" : runs.length ? "No dependency list was captured for this session" : "No comparison yet"}>
+            {tab === "manifest" ? (
+              runs.length ? "Without a dependency list there's nothing to split. The hook captures one when a session starts; an imported session has one if the agent opened it." : "Run the review to compare with what funding by dependency list would pay."
+            ) : (
+              <>
+                Run the review: Muse Spark reads the evidence below and proposes weights with citations; code then drops anything uncited, hallucinated or merely present, and enforces the per-package cap from your policy.
+                {runs.length === 0 && cands.length > 0 && (
+                  <> For the eval, label packages in “Your ground truth” first: labels saved before any attribution runs count as blind.</>
+                )}
+              </>
             )}
           </Empty>
         ) : (
           <div className="grid-2" style={{ alignItems: "start" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {shown.validated.weights.map((w: any) => (
+              {shown.method === "manifest" && (
+                <div className="callout"><Info size={16} color="var(--muted)" /><div className="small">Every declared package gets the same share, used or not. This approximates manifest-based funding. It is not thanks.dev's exact algorithm.</div></div>
+              )}
+              {[...paidByRank<any>(shown.validated.weights), ...shown.validated.weights.filter((w: any) => w.weight <= 0)].map((w: any, _i: number, all: any[]) => (
                 <div key={`${w.ecosystem}:${w.name}`} className="card" style={{ padding: 14, boxShadow: "none" }}>
                   <div className="row" style={{ gap: 8 }}>
                     <EcoIcon ecosystem={w.ecosystem} />
                     <strong>{w.name}</strong>
-                    <Status value={w.classification} />
-                    <div className="spacer" />
-                    <span className="num" style={{ fontWeight: 650 }}>{pct(w.weight, 1)}</span>
+                    {shown.method !== "manifest" && <Status value={w.classification} />}
+                    {w.weight === 0 && <><div className="spacer" /><span className="num muted" style={{ fontWeight: 650 }}>{pct(0, 1)}</span></>}
                   </div>
-                  <div className={`bar ${w.weight === 0 ? "muted" : ""}`} style={{ margin: "10px 0" }}><span style={{ width: `${Math.max(w.weight * 100, w.weight > 0 ? 2 : 0)}%` }} /></div>
-                  {w.rationale && <p className="small" style={{ color: "var(--text-2)" }}>{w.rationale}</p>}
+                  {w.weight > 0 ? <ShareBars method={shown.method} row={w} shares={importanceShares(all.filter((x: any) => x.weight > 0))} /> : <div className="bar muted" style={{ margin: "10px 0" }}><span style={{ width: 0 }} /></div>}
+                  {w.rationale && shown.method !== "manifest" && <p className="small" style={{ color: "var(--text-2)" }}>{w.rationale}</p>}
                   {w.evidence_ids.length > 0 && (
                     <div className="row" style={{ gap: 6, marginTop: 8 }}>
                       {w.evidence_ids.slice(0, 8).map((eid: string) => {
@@ -158,9 +180,7 @@ function SessionView({ id }: { id: string }) {
                   )}
                 </div>
               ))}
-              {shown.validated.unallocated > 0.0001 && (
-                <div className="callout"><Info size={16} color="var(--muted)" /><div className="small">{pct(shown.validated.unallocated, 1)} of this session's budget stays in the pool (per-package cap or nothing qualified).</div></div>
-              )}
+              <LeftoverNote flags={shown.flags} unallocated={shown.validated.unallocated} maxShare={ov?.policy?.max_package_share} paid={shown.validated.weights.filter((w: any) => w.weight > 0).length} />
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               {compareKeys.length > 0 && llm && base && (
@@ -317,6 +337,22 @@ function describe(e: any, cwd?: string | null): string {
   return "";
 }
 
+/** "Declared 38 · Relied on 4 · Merely present 34", for whichever method is on screen. */
+function RelianceStrip({ cands, run }: { cands: any[]; run: any }) {
+  const declared = cands.filter((c) => c.in_initial_manifest || c.in_final_manifest).length;
+  if (!declared) return <div className="reliance-strip">No dependency list was captured for this session.</div>;
+  const present = cands.filter((c) => c.status === "present_only").length;
+  const paid = run?.validated.weights.filter((w: any) => w.weight > 0).length;
+  return (
+    <div className="reliance-strip">
+      <span>Declared <strong>{declared}</strong></span>
+      {run && <><span className="sep">·</span><span>{run.method === "manifest" ? "Paid by an equal split" : "Relied on"} <strong>{paid}</strong></span></>}
+      <span className="sep">·</span>
+      <span>Merely present <strong>{present}</strong> {run?.method === "manifest" ? "(this method pays them anyway)" : "(never paid)"}</span>
+    </div>
+  );
+}
+
 function MiniStat({ icon, label, value, tone, foot }: { icon: React.ReactNode; label: string; value: number; tone?: string; foot?: string }) {
   return (
     <div className="card stat" style={{ padding: 16 }}>
@@ -382,10 +418,11 @@ function LabelEditor({ sessionId, candidates, labels, blind, attributed, onSaved
 
 const pctStr = (w: number) => `${(w * 100).toFixed(w < 0.1 ? 1 : 0)}%`;
 
-function Receipt({ run, cands, project, sessionId }: { run: any; cands: any[]; project: string | null; sessionId: string }) {
+function Receipt({ run, cands, project, sessionId, maxShare }: { run: any; cands: any[]; project: string | null; sessionId: string; maxShare?: number }) {
   const copy = useCopy();
   const chartPalette = usePalette();
-  const paid = run.validated.weights.filter((w: any) => w.weight > 0);
+  const paid = paidByRank<any>(run.validated.weights);
+  const shares = importanceShares(paid);
   const repoOf = (w: any) => cands.find((c) => c.ecosystem === w.ecosystem && c.name === w.name)?.repo as string | undefined;
   return (
     <Card
@@ -429,19 +466,20 @@ function Receipt({ run, cands, project, sessionId }: { run: any; cands: any[]; p
                     <Status value={w.classification} />
                     {repoOf(w) && <a className="small" href={`https://${repoOf(w)}`} target="_blank" rel="noreferrer">{repoOf(w)!.replace("github.com/", "")}</a>}
                   </div>
+                  <ShareBars method={run.method} row={w} shares={shares} />
                   {w.rationale && <div className="small muted" style={{ marginTop: 2 }}>{w.rationale}</div>}
                 </div>
-                <span className="num" style={{ fontWeight: 650, flex: "none" }}>{pctStr(w.weight)}</span>
               </div>
             ))}
             {run.validated.unallocated > 0.0001 && (
               <div className="row small muted" style={{ gap: 10, padding: "8px 0", borderTop: "1px dashed var(--border)", flexWrap: "nowrap" }}>
                 <span className="legend-dot" style={{ background: "var(--neutral-bar)" }} />
-                <span style={{ flex: 1 }}>Stays in the pool (per-package cap or nothing else qualified)</span>
+                <span style={{ flex: 1 }}>Stays in the pool</span>
                 <span className="num">{pctStr(run.validated.unallocated)}</span>
               </div>
             )}
           </div>
+          <LeftoverNote flags={run.flags} unallocated={run.validated.unallocated} maxShare={maxShare} paid={paid.length} />
         </div>
       )}
     </Card>

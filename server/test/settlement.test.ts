@@ -90,10 +90,10 @@ before(() => {
 test("plan -> approve -> execute twice sends exactly one PayPal batch", async () => {
   const { settlementId } = s.planSettlement("local");
   const st = db().prepare("SELECT * FROM settlements WHERE id = ?").get(settlementId) as any;
-  // available 9.21, distributable floor(921/1.02) = 902 -> zod 541 (claimed), dayjs 361 (reserved)
+  // available 9.21, distributable floor(921/1.05) = 877 -> zod 526 (claimed), dayjs 351 (reserved)
   assert.equal(st.status, "draft");
-  assert.equal(st.planned_minor, 541);
-  assert.equal(st.reserved_minor, 361);
+  assert.equal(st.planned_minor, 526);
+  assert.equal(st.reserved_minor, 351);
   s.approveSettlement(settlementId);
   const first = await s.executeSettlement(settlementId);
   const second = await s.executeSettlement(settlementId);
@@ -115,18 +115,20 @@ test("UNCLAIMED item books money out; cancelling returns it and re-earmarks for 
   it.payout_item_fee = { currency: "USD", value: "0.11" };
   s.applyPayoutItem(it, "webhook", "PAYMENT.PAYOUTS-ITEM.UNCLAIMED");
   let pool = poolSummary("USD", "local");
-  assert.equal(pool.payoutsSent, -541);
+  assert.equal(pool.payoutsSent, -526);
   assert.equal(pool.payoutFees, -11);
 
   await s.cancelUnclaimed(item.sender_item_id, { manual: true });
   pool = poolSummary("USD", "local");
-  assert.equal(pool.returned, 541);
+  assert.equal(pool.returned, 526);
   const alloc = db().prepare("SELECT status FROM allocations WHERE package = 'zod'").get() as any;
   assert.equal(alloc.status, "reserved");
   const claim = db().prepare("SELECT status FROM claims WHERE id = 'clm1'").get() as any;
   assert.equal(claim.status, "receiver_unclaimed");
-  // Balance = 1000 - 79 - 541 - 11 + 541 = 910; zod (541) and dayjs (361) stay earmarked.
+  // Balance = 1000 - 79 - 526 - 11 + 526 = 910; zod (526) and dayjs (351) stay earmarked.
   assert.equal(pool.balance, 910);
-  assert.equal(pool.reserved, 902);
-  assert.equal(pool.available, 8);
+  assert.equal(pool.reserved, 877);
+  // The batch isn't final, so what's left of its $0.25 fee reserve after the reported $0.11 is still held: 14.
+  assert.equal(pool.inFlight, 14);
+  assert.equal(pool.available, 19);
 });

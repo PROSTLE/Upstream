@@ -1,4 +1,5 @@
 import { db, now } from "./db.ts";
+import { recordLedgerEvent } from "./money/flow.ts";
 
 export type LedgerKind =
   | "FUNDING_GROSS"
@@ -38,7 +39,9 @@ export function book(entry: {
       entry.source,
       entry.userId,
     );
-  return Number(res.changes) > 0;
+  if (Number(res.changes) === 0) return false;
+  recordLedgerEvent(Number(res.lastInsertRowid));
+  return true;
 }
 
 export interface PoolSummary {

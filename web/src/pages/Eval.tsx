@@ -24,6 +24,8 @@ export function Eval() {
   const total = report.llm.sessions;
   const blindCount = report.blind.llm.sessions;
   const n = data.llm.sessions;
+  const manifest = data.manifest;
+  const manifestLabel = `Dependency list (on ${plural(manifest.sessions, "session")} with a dependency list)`;
 
   return (
     <div className="page">
@@ -58,6 +60,7 @@ export function Eval() {
                     <th style={{ padding: "6px 0", fontWeight: 560 }}>Metric</th>
                     <th style={{ fontWeight: 560 }}><span className="row" style={{ gap: 6 }}><BrandIcon name="meta" size={13} />Muse Spark</span></th>
                     <th style={{ fontWeight: 560 }}>Baseline</th>
+                    <th style={{ fontWeight: 560, maxWidth: 170 }}>{manifestLabel}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -71,23 +74,28 @@ export function Eval() {
                         <td style={{ padding: "10px 0" }}>{m.label}</td>
                         <td className="num" style={{ fontWeight: winA ? 700 : 500, color: winA ? "var(--green)" : undefined }}>{m.fmt(a)}</td>
                         <td className="num" style={{ fontWeight: winB ? 700 : 500, color: winB ? "var(--green)" : undefined }}>{m.fmt(b)}</td>
+                        <td className="num" style={{ fontWeight: 500 }}>{m.fmt(manifest[m.key])}</td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
               <p className="muted small" style={{ marginTop: 12 }}>
-                Confusion counts — Muse Spark: TP {data.llm.tp}, FP {data.llm.fp}, FN {data.llm.fn}, TN {data.llm.tn}. Baseline: TP {data.baseline.tp}, FP {data.baseline.fp}, FN {data.baseline.fn}, TN {data.baseline.tn}.
+                Confusion counts — Muse Spark: TP {data.llm.tp}, FP {data.llm.fp}, FN {data.llm.fn}, TN {data.llm.tn}. Baseline: TP {data.baseline.tp}, FP {data.baseline.fp}, FN {data.baseline.fn}, TN {data.baseline.tn}. Dependency list: TP {manifest.tp}, FP {manifest.fp}, FN {manifest.fn}, TN {manifest.tn}.
+              </p>
+              <p className="muted small" style={{ marginTop: 6 }}>
+                The dependency-list column pays every declared package the same, and only counts sessions that have a list, so it isn't marked as a winner against the other two. This approximates manifest-based funding. It is not thanks.dev's exact algorithm.
               </p>
             </Card>
             <Card title="Side by side" icon={<Scale size={17} />}>
               <Chart
                 height={260}
                 options={{
-                  data: ["precision", "recall", "f1", "accuracy"].map((k) => ({ metric: k.toUpperCase(), muse: data.llm[k] != null ? +(data.llm[k] * 100).toFixed(1) : undefined, baseline: data.baseline[k] != null ? +(data.baseline[k] * 100).toFixed(1) : undefined })),
+                  data: ["precision", "recall", "f1", "accuracy"].map((k) => ({ metric: k.toUpperCase(), muse: data.llm[k] != null ? +(data.llm[k] * 100).toFixed(1) : undefined, baseline: data.baseline[k] != null ? +(data.baseline[k] * 100).toFixed(1) : undefined, manifest: manifest[k] != null ? +(manifest[k] * 100).toFixed(1) : undefined })),
                   series: [
                     { type: "bar", xKey: "metric", yKey: "muse", yName: "Muse Spark", cornerRadius: 4 },
                     { type: "bar", xKey: "metric", yKey: "baseline", yName: "Baseline", cornerRadius: 4, fill: neutral, stroke: neutral },
+                    { type: "bar", xKey: "metric", yKey: "manifest", yName: manifestLabel, cornerRadius: 4 },
                   ],
                   axes: { y: { type: "number", min: 0, max: 100, label: { formatter: ({ value }: any) => `${value}%` } }, x: { type: "category" } },
                   legend: { position: "bottom" },

@@ -3,12 +3,13 @@ import { useEffect, useState } from "react";
 export type ThemePref = "system" | "light" | "dark";
 const KEY = "upstream.theme";
 
+/** The app opens in light mode unless someone has chosen otherwise. index.html applies the same rule before first paint. */
 export function getThemePref(): ThemePref {
   try {
     const v = localStorage.getItem(KEY);
-    return v === "light" || v === "dark" ? v : "system";
+    return v === "dark" || v === "system" ? v : "light";
   } catch {
-    return "system";
+    return "light";
   }
 }
 
@@ -17,8 +18,7 @@ export function applyTheme(pref: ThemePref) {
   if (pref === "system") root.removeAttribute("data-theme");
   else root.setAttribute("data-theme", pref);
   try {
-    if (pref === "system") localStorage.removeItem(KEY);
-    else localStorage.setItem(KEY, pref);
+    localStorage.setItem(KEY, pref);
   } catch {
     // Storage can be unavailable; the choice then lasts for this page only.
   }

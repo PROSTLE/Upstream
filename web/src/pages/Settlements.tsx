@@ -5,9 +5,11 @@ import {
 } from "lucide-react";
 import type { ColDef } from "ag-grid-community";
 import { api, useApi } from "../api.ts";
-import { dateTime, money, moneyStr, shortId, plural } from "../format.ts";
+import { dateTime, money, moneyStr, pct, shortId, plural } from "../format.ts";
 import { ActionButton, BrandIcon, Card, CheckRow, Empty, ErrorBox, Loading, Modal, PageHead, Status, Stepper, useToast } from "../ui.tsx";
 import { Grid } from "../data.tsx";
+import { BatchFlow } from "../money/MoneyFlow.tsx";
+import { useMoneyRefresh } from "../money/stream.tsx";
 import { TrailDrawer } from "../trail.tsx";
 import { useBrand } from "../brand.tsx";
 
@@ -75,7 +77,8 @@ export function Settlements() {
 export function SettlementDetail() {
   const brand = useBrand();
   const { id = "" } = useParams();
-  const { data: s, error, loading, reload, setData } = useApi<any>(`/api/settlements/${encodeURIComponent(id)}`, [id]);
+  const { data: s, error, loading, reload, refresh, setData } = useApi<any>(`/api/settlements/${encodeURIComponent(id)}`, [id]);
+  useMoneyRefresh((e) => e.settlement_id === id, refresh);
   const toast = useToast();
   const [replay, setReplay] = useState<any>(null);
   const [showRequest, setShowRequest] = useState(false);
@@ -244,6 +247,12 @@ export function SettlementDetail() {
         <ErrorBox error={s.error.retryable ? `Last attempt hit a network or 5xx error. Retrying is safe: ${s.error.message}` : `PayPal ${s.error.status ?? ""}: ${JSON.stringify(s.error.body ?? s.error)}`} />
       )}
 
+      {["approved", "sending", "sent", "held"].includes(s.status) && (
+        <Card title="Watch this payout" sub="Moves when PayPal confirms each step" icon={<Send size={17} />} tone="teal">
+          <BatchFlow settlement={s} />
+        </Card>
+      )}
+
       <div className="grid-4">
         <Box label="Pool available at planning" value={money(s.pool_minor, cur)} />
         <Box label="To verified maintainers" value={money(s.planned_minor, cur)} tone="var(--teal)" />
@@ -267,6 +276,21 @@ export function SettlementDetail() {
           )}
         </Card>
       </div>
+
+      {s.policy?.held_for_fees?.length > 0 && (
+        <Card title="Held to save fees" sub="These maintainers are verified, but paying them now would cost too much of the payout. The money waits for them and goes out once it reaches the amount shown." icon={<Hourglass size={17} />} tone="amber">
+          <div className="summary">
+            {s.policy.held_for_fees.map((h: any) => (
+              <div key={h.repo} className="line-row">
+                <span style={{ minWidth: 0 }}>
+                  <strong>{h.repo.replace("github.com/", "")}</strong> · {money(h.held_minor, cur)} held · paying now would lose {pct(h.fee_share_if_paid_now)} to PayPal's {money(h.fee_estimate_minor, cur)} fee · pays out at {money(h.threshold_minor, cur)}
+                </span>
+                <span className="muted small" style={{ flex: "none" }}>{h.estimate_source === "paypal" ? "PayPal's last fee" : "Default estimate"}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <Card title="Allocations" sub="Earmarks inside the pool: what this run pays, holds, or carries over" icon={<ListChecks size={17} />}>
         <Grid rows={s.allocations} columns={allocCols} height={Math.min(120 + s.allocations.length * 44, 460)} getRowId={(r) => r.id} />

@@ -117,14 +117,22 @@ export function evalReport(userId: string) {
   const basePairs: { labels: LabelRow[]; v: Validated }[] = [];
   const blindLlm: { labels: LabelRow[]; v: Validated }[] = [];
   const blindBase: { labels: LabelRow[]; v: Validated }[] = [];
-  const perSession: { session_id: string; labelled: number; blind: boolean; llm?: Validated; baseline?: Validated }[] = [];
+  const manifestPairs: { labels: LabelRow[]; v: Validated }[] = [];
+  const blindManifest: { labels: LabelRow[]; v: Validated }[] = [];
+  const perSession: { session_id: string; labelled: number; blind: boolean; llm?: Validated; baseline?: Validated; manifest?: Validated }[] = [];
   for (const [sid, ls] of bySession) {
     const runs = runsForSession(sid);
     const latest = (m: RunRecord["method"]) => runs.find((r) => r.method === m);
     const llm = latest("llm");
     const base = latest("baseline");
+    const manifest = latest("manifest");
     // Compare both methods only on sessions where both exist, so the numbers are like for like.
     const blind = blindFor(ls, runs);
+    // Scored only where a dependency list was captured: without one this method has no opinion, which isn't the same as being wrong.
+    if (manifest) {
+      manifestPairs.push({ labels: ls, v: manifest.validated });
+      if (blind) blindManifest.push({ labels: ls, v: manifest.validated });
+    }
     if (llm && base) {
       llmPairs.push({ labels: ls, v: llm.validated });
       basePairs.push({ labels: ls, v: base.validated });
@@ -133,12 +141,13 @@ export function evalReport(userId: string) {
         blindBase.push({ labels: ls, v: base.validated });
       }
     }
-    perSession.push({ session_id: sid, labelled: ls.length, blind, llm: llm?.validated, baseline: base?.validated });
+    perSession.push({ session_id: sid, labelled: ls.length, blind, llm: llm?.validated, baseline: base?.validated, manifest: manifest?.validated });
   }
   return {
     llm: score(llmPairs),
     baseline: score(basePairs),
-    blind: { llm: score(blindLlm), baseline: score(blindBase) },
+    manifest: score(manifestPairs),
+    blind: { llm: score(blindLlm), baseline: score(blindBase), manifest: score(blindManifest) },
     perSession,
   };
 }

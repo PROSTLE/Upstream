@@ -28,6 +28,11 @@ export function fromMinor(minor: number, currency: string): string {
   return `${negative ? "-" : ""}${whole}${digits > 0 ? "." + frac : ""}`;
 }
 
+/** "$4.00": what people read. */
+export function formatMoney(minor: number, currency: string): string {
+  return new Intl.NumberFormat("en", { style: "currency", currency }).format(Number(fromMinor(minor, currency)));
+}
+
 /**
  * Split `total` minor units across weights with the largest-remainder method,
  * so the parts always sum exactly to `total`.

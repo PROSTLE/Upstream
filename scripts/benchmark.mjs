@@ -1,4 +1,5 @@
-// Upstream benchmark: node scripts/benchmark.mjs docs/BENCHMARK.md
+// Upstream benchmark: node scripts/benchmark.mjs [report.md]. The report goes to data/benchmark.md (not tracked) unless you name a file.
+// The README's benchmark section summarises the last full run.
 // Uses a throwaway database and server, so it never touches data/upstream.db or PayPal. It does call the live AI model (about $0.30 per run).
 // Gold labels below are fixed before any run. Scenarios are scripted, not real agent sessions.
 import fs from "node:fs";
@@ -8,7 +9,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const outFile = process.argv[2] ?? path.join(repo, "docs", "BENCHMARK.md");
+const outFile = process.argv[2] ?? path.join(repo, "data", "benchmark.md");
+fs.mkdirSync(path.dirname(outFile), { recursive: true });
 const RUNS = 3;
 const PRICE = { input: 1.25, output: 4.25 }; // dev.meta.ai/docs/pricing-rate-limits, Standard mode, USD per 1M tokens
 

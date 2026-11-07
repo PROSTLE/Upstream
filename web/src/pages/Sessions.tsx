@@ -1,11 +1,86 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { PlugZap, Search, TerminalSquare } from "lucide-react";
+import { FileUp, Info, Loader2, PlugZap, Search, TerminalSquare } from "lucide-react";
 import type { ColDef } from "ag-grid-community";
-import { useApi } from "../api.ts";
-import { ago, dateTime, duration } from "../format.ts";
-import { Card, Empty, ErrorBox, Loading, PackageChip, PageHead, Status } from "../ui.tsx";
+import { api, useApi } from "../api.ts";
+import { ago, dateTime, duration, plural } from "../format.ts";
+import { chunkEvents, describeStats, transcriptToEvents } from "../transcript.ts";
+import { useBrand } from "../brand.tsx";
+import { Card, DropZone, Empty, ErrorBox, Loading, Modal, PackageChip, PageHead, Status } from "../ui.tsx";
 import { Grid } from "../data.tsx";
+
+// The server accepts 10 MB per request; a long session is sent in several requests.
+const UPLOAD_CHUNK_BYTES = 8_000_000;
+
+type ImportRow = { name: string; state: "working" | "done" | "failed"; summary?: string; warnings: string[]; stored?: number; evidence?: number; sessionId?: string; error?: string };
+
+function ImportModal({ onClose, onImported }: { onClose: () => void; onImported: () => void }) {
+  const brand = useBrand();
+  const [rows, setRows] = useState<ImportRow[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  const importFiles = async (files: File[]) => {
+    setBusy(true);
+    for (const file of files) {
+      const update = (patch: Partial<ImportRow>) => setRows((all) => all.map((r) => (r.name === file.name ? { ...r, ...patch } : r)));
+      setRows((all) => [...all.filter((r) => r.name !== file.name), { name: file.name, state: "working", warnings: [] }]);
+      try {
+        const converted = transcriptToEvents(await file.text());
+        update({ summary: describeStats(converted.stats), warnings: converted.warnings });
+        if (!converted.sessionId) throw new Error("This doesn't look like a Claude Code session file.");
+        let stored = 0;
+        let evidence = 0;
+        let sessionId = "";
+        for (const events of chunkEvents(converted.events, UPLOAD_CHUNK_BYTES)) {
+          const r = await api<{ session_id: string; stored: number; evidence: number }>("/api/sessions/import", { body: { file_name: file.name, events }, admin: true });
+          stored += r.stored;
+          evidence += r.evidence;
+          sessionId = r.session_id;
+        }
+        update({ state: "done", stored, evidence, sessionId });
+        onImported();
+      } catch (e) {
+        update({ state: "failed", error: (e as Error).message });
+      }
+    }
+    setBusy(false);
+  };
+
+  return (
+    <Modal width={640} title="Import past sessions" sub="See who your agent relied on before you installed anything" icon={<FileUp size={17} />} onClose={onClose}>
+      <div className="stack">
+        <DropZone label="Drop Claude Code session files here, or click to choose" hint="One .jsonl file per session" accept=".jsonl" disabled={busy} onFiles={(f) => void importFiles(f)} />
+        <div className="small muted stack" style={{ gap: 4 }}>
+          <span><strong>Where to find them.</strong> macOS and Linux: <code>~/.claude/projects/&lt;project&gt;/</code> · Windows: <code>%USERPROFILE%\.claude\projects\&lt;project&gt;\</code></span>
+          <span>Work done by subagents is in <code>&lt;session&gt;/subagents/</code> next to the session file. Add those files too; they join the same session.</span>
+        </div>
+        <div className="callout">
+          <Info size={16} color="var(--muted)" />
+          <div className="small">Your own files' contents stay in this browser, apart from the first 8 KB of source files the agent edited. Code the agent wrote, commands it ran and dependency files it read are sent to your {brand} server. Secret files are never sent.</div>
+        </div>
+        {rows.length > 0 && (
+          <div className="summary">
+            {rows.map((r) => (
+              <div key={r.name} className="line-row" style={{ alignItems: "flex-start" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div className="row" style={{ gap: 8 }}>
+                    {r.state === "working" && <Loader2 size={13} className="spin" aria-label="Importing" />}
+                    <strong style={{ overflowWrap: "anywhere" }}>{r.name}</strong>
+                  </div>
+                  {r.summary && <div className="muted small">{r.summary}</div>}
+                  {r.state === "done" && <div className="muted small">{r.stored ? `${plural(r.stored!, "new record")}, ${plural(r.evidence!, "piece")} of evidence` : "Nothing new: this session was already here."}</div>}
+                  {r.warnings.map((w) => <div key={w} className="small" style={{ color: "var(--amber)" }}>{w}</div>)}
+                  {r.error && <div className="small" style={{ color: "var(--red)" }} role="alert">{r.error}</div>}
+                </div>
+                {r.sessionId && <Link className="btn sm" style={{ flex: "none" }} to={`/sessions/${encodeURIComponent(r.sessionId)}`}>Open session</Link>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
 
 const FILTERS = [
   { v: "all", label: "All" },
@@ -15,8 +90,9 @@ const FILTERS = [
 ] as const;
 
 export function Sessions() {
-  const { data, error, loading, updatedAt } = useApi<any[]>("/api/sessions", [], { poll: 10000 });
+  const { data, error, loading, updatedAt, reload } = useApi<any[]>("/api/sessions", [], { poll: 10000 });
   const nav = useNavigate();
+  const [importing, setImporting] = useState(false);
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["v"]>("all");
   const [q, setQ] = useState("");
   const counts = useMemo(() => ({
@@ -33,7 +109,17 @@ export function Sessions() {
   }, [data, filter, q]);
 
   const cols: ColDef<any>[] = [
-    { headerName: "Project", field: "project", minWidth: 160, cellRenderer: (p: any) => <strong>{p.value ?? "unknown"}</strong> },
+    {
+      headerName: "Project",
+      field: "project",
+      minWidth: 200,
+      cellRenderer: (p: any) => (
+        <span className="row" style={{ gap: 8 }}>
+          <strong>{p.value ?? "unknown"}</strong>
+          {p.data.source === "transcript" && <span className="pill violet" title="Imported from a Claude Code session file">Imported</span>}
+        </span>
+      ),
+    },
     { headerName: "Status", field: "status", maxWidth: 140, cellRenderer: (p: any) => <Status value={p.value} live={p.value === "open"} /> },
     { headerName: "Started", field: "started_at", valueFormatter: (p) => dateTime(p.value), sort: "desc", maxWidth: 160 },
     { headerName: "Length", valueGetter: (p) => duration(p.data.started_at, p.data.ended_at ?? p.data.last_event_at), maxWidth: 110 },
@@ -60,8 +146,14 @@ export function Sessions() {
         eyebrow="Step 2"
         title="Coding sessions"
         subtitle="Each row is one Claude Code session, showing what the agent actually did: packages installed, code written with them, library source read and docs opened."
-        actions={<span className="muted small">{updatedAt ? `Updated ${ago(new Date(updatedAt).toISOString())} · live` : ""}</span>}
+        actions={
+          <>
+            <span className="muted small">{updatedAt ? `Updated ${ago(new Date(updatedAt).toISOString())} · live` : ""}</span>
+            <button className="btn" onClick={() => setImporting(true)}><FileUp size={15} />Import past sessions</button>
+          </>
+        }
       />
+      {importing && <ImportModal onClose={() => setImporting(false)} onImported={() => void reload()} />}
       {error && <ErrorBox error={error} />}
       {loading && !data ? <Loading rows={1} /> : !data?.length ? (
         <Card>
