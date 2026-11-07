@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" width="112" alt="Upstream logo: a salmon leaping out of the current">
+  <img src="docs/logo.svg" width="112" alt="Upstream logo: an arrow rising out of two streams">
 </p>
 
 <h1 align="center">Upstream</h1>
@@ -26,7 +26,7 @@ When you build something with an AI coding agent, the agent doesn't write it fro
 
 Upstream closes that loop. A small hook watches what your agent **actually did** during a session: which packages it installed, which ones it wrote code against, whose source it studied. An AI model, Meta's Muse Spark, weighs that evidence and has to cite it. Then plain code throws out anything it can't back up. You set a budget with PayPal, you approve every payout yourself, and **PayPal Payouts** sends the money to maintainers who have proven they run the repository.
 
-The name is the idea. Money should flow back upstream, to where the work came from. The logo is a salmon doing exactly that.
+The name is the idea. Money should flow back upstream, to where the work came from, and that is what the logo shows: an arrow rising out of the stream.
 
 ### Contents
 

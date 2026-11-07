@@ -15,7 +15,7 @@ const SKY = {
     core: ["rgba(205,220,255,0.3)", "rgba(130,160,235,0.1)", "rgba(90,120,210,0)"],
     strength: 1,
   },
-  // White stars vanish on a pale page, so here they're the app's blue and teal, and softer, so they never compete with the text.
+  // White stars vanish on a pale page, so here they're the logo's blue and teal, and softer, so they never compete with the text.
   light: {
     stars: ["#2f5bea", "#5b7ff0", "#11a39c", "#7d93d8"],
     dust: ["#d98a45", "#c27803"],

@@ -9,17 +9,33 @@ import { registerTokenPrompt, setAdminToken } from "./api.ts";
 
 // ---------- brand ----------
 
-/** A salmon leaping out of the current. Same shapes and colours as scripts/icons.mjs, which renders the favicon and app icons. */
+/** An arrow rising out of two streams. Same shapes and colours as scripts/icons.mjs, which renders the favicon and app icons. */
 export function Logo({ size = 30 }: { size?: number }) {
+  const id = useId();
+  const g = `${id}g`;
+  const l = `${id}l`;
+  // Small sizes get a thicker stroke so the lines stay crisp.
+  const stroke = size <= 24 ? 2.7 : 2.4;
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
-      <rect width="32" height="32" rx="8" fill="#14233f" />
-      <g transform="translate(.6 -2.4) rotate(-35 16 16)">
-        <path d="M26.6 16C22.8 11.7 15.2 11.6 10.6 16c4.6 4.4 12.2 4.3 16 0Z" fill="#f2795b" />
-        <path d="M11.4 16 5.6 11.9l1.9 4.1-1.9 4.1Z" fill="#f2795b" />
-        <circle cx="23.1" cy="15.2" r=".95" fill="#14233f" />
+      <defs>
+        <linearGradient id={g} x1="2" y1="30" x2="30" y2="2" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#2b4fe0" />
+          <stop offset=".55" stopColor="#1f7fc4" />
+          <stop offset="1" stopColor="#12a89e" />
+        </linearGradient>
+        <linearGradient id={l} x1="16" y1="0" x2="16" y2="14" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#fff" stopOpacity=".1" />
+          <stop offset="1" stopColor="#fff" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <rect width="32" height="32" rx="9" fill={`url(#${CSS.escape(g)})`} />
+      <rect width="32" height="32" rx="9" fill={`url(#${CSS.escape(l)})`} />
+      <g fill="none" stroke="#fff" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round">
+        <path d="M7.6 23.4C10.6 22.2 12.4 19.2 16 19.2s5.4 3 8.4 4.2" strokeOpacity=".5" />
+        <path d="M7.6 17.6C10.6 16.4 12.4 13.4 16 13.4s5.4 3 8.4 4.2" />
+        <path d="M16 13.4V6.6M12.7 9.7 16 6.4l3.3 3.3" />
       </g>
-      <path d="M5.5 26.4c1.6-1.3 3.3-1.3 4.9 0s3.3 1.3 4.9 0 3.3-1.3 4.9 0 3.3 1.3 4.9 0" fill="none" stroke="#f4efe3" strokeWidth={size <= 24 ? 2.5 : 2.1} strokeLinecap="round" />
     </svg>
   );
 }
