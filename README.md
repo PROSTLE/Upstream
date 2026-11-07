@@ -30,6 +30,7 @@ The name is the idea. Money should flow back upstream, to where the work came fr
 
 ### Contents
 
+- [A look at the app](#a-look-at-the-app)
 - [Why we built it](#why-we-built-it)
 - [Who it's for](#who-its-for)
 - [How it works](#how-it-works), with the big picture, one session from start to finish, and where the money is at any moment
@@ -37,11 +38,51 @@ The name is the idea. Money should flow back upstream, to where the work came fr
 - [How AI is used, and kept on a leash](#how-ai-is-used-and-kept-on-a-leash)
 - [The evidence layer](#the-evidence-layer)
 - [Architecture](#architecture)
+- [AG Grid and Render in Upstream](#ag-grid-and-render-in-upstream)
 - [Trust and safety](#trust-and-safety)
 - [What's proven so far](#whats-proven-so-far), including the benchmark
 - [Try it in two minutes](#try-it-in-two-minutes)
 - [Run it yourself](#run-it-yourself)
 - [Tools used](#tools-used), [limitations](#limitations-stated-plainly) and [sources](#sources)
+
+---
+
+## A look at the app
+
+These are real screens, showing the sandbox run described [further down](#one-session-from-start-to-finish). The dashboard screens were taken in its read-only demo mode.
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/home.png" alt="The home page with live numbers from the server"><br>
+      <b>Home.</b> Live totals from the server, and the two ways in: sign in with GitHub, or check a session without an account.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/check.png" alt="The public check page"><br>
+      <b>Check a session.</b> Drop a Claude Code session file and see what your agent really relied on. No sign-in, and it's deleted after 24 hours.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <img src="docs/screenshots/overview.png" alt="The dashboard overview"><br>
+      <b>Overview.</b> Your budget, sessions, verified maintainers and payouts, one next step at a time, and where the money is right now.
+    </td>
+    <td valign="top">
+      <img src="docs/screenshots/session.png" alt="A reviewed coding session"><br>
+      <b>A reviewed session.</b> What the agent relied on, Muse Spark's reasons and cited evidence, each package's share, and how that compares with counting imports.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <img src="docs/screenshots/payout.png" alt="A sent payout with its policy checks"><br>
+      <b>A payout.</b> The PayPal batch, the policy checks code ran before calling PayPal, the payout items, and the share held for a maintainer who hasn't claimed yet.
+    </td>
+    <td valign="top">
+      <img src="docs/screenshots/money-records.png" alt="Money records with the ledger and PayPal API log"><br>
+      <b>Money records.</b> Every PayPal-confirmed movement, the ledger, and a log of every call made to PayPal's API.
+    </td>
+  </tr>
+</table>
 
 ---
 
@@ -286,6 +327,88 @@ flowchart TB
 | `mcp/src/` | The MCP server that gives agents guarded payout tools |
 | `.claude-plugin/`, `skills/` | The Claude Code plugin: hooks, MCP server and four skills (`/credits`, `/fund`, `/receipt`, `/statement`). The `SKILL.md` files are part of the plugin, which is why they're the only other Markdown files here. |
 | `scripts/` | The dev runner, the icon renderer, the benchmark and the `/check` sample builder |
+
+---
+
+## AG Grid and Render in Upstream
+
+Two of the hackathon's partner tools are part of how Upstream is built: **AG Grid** for its tables and charts, and **Render** for hosting. This is what each one does here.
+
+### AG Grid: the tables and charts
+
+Upstream uses the free Community editions: AG Grid (`ag-grid-community` and `ag-grid-react`, version 36) and AG Charts (`ag-charts-community` and `ag-charts-react`, version 14). Wherever the dashboard shows rows of records, it's an AG Grid. Wherever it compares numbers, it's an AG Chart.
+
+| Page | What's used | What it shows |
+|---|---|---|
+| Coding sessions | Grid | One row per Claude Code session: status, start time, length, tool events, evidence count, the packages credited with their shares, and the method that decided it. Click a row to open the session. |
+| A reviewed session | Bar chart | Muse Spark's share for each package, next to what counting imports would pay. |
+| Maintainers | Grid | Every package your agent used, its source repository, where that link came from, funding signals and whether the maintainer is verified, with links to the money trail and to invite the maintainer. |
+| A payout | Two grids | The payout items, one per verified repository with PayPal's status, and the allocations behind them: paid, held or carried over. |
+| Money records | Two grids and a donut chart | The ledger of PayPal-confirmed movements, filtered by type and searchable; the log of every PayPal API call with its HTTP status; and where the money is now. |
+| AI accuracy | Bar chart | Muse Spark's scores against the baseline, once you've labelled sessions. |
+
+**How it's wired**
+
+- **One wrapper for every grid.** `Grid` in [`web/src/data.tsx`](web/src/data.tsx) registers AG Grid's `AllCommunityModule` and uses the Quartz theme with Upstream's colours, type and spacing. There are separate light and dark versions, which follow the app's theme switch. Every column can be sorted, resized and filtered. Clicking a row opens its details, but a click on a button or link inside the row does only that.
+- **One wrapper for every chart.** `Chart` in the same file gives every AG Chart the app's palette and type, in light and dark.
+- **Loaded only where it's needed.** Pages load on demand, and both libraries live in that one file. So the home page, `/check` and the maintainer pages never download them. In the build, they're a separate chunk that those pages don't request.
+- **Nothing is precomputed for display.** Every row comes from the API, which reads the same SQLite records the payouts are made from.
+
+```mermaid
+flowchart LR
+    DB[("SQLite")] --> API["Express API"]
+    API --> S["Coding sessions"]
+    API --> M["Maintainers"]
+    API --> P["A payout"]
+    API --> L["Money records"]
+    API --> R["A reviewed session"]
+    API --> E["AI accuracy"]
+    S --> G["Grid wrapper<br/>AgGridReact, Quartz theme,<br/>light and dark"]
+    M --> G
+    P --> G
+    L --> G
+    L --> C["Chart wrapper<br/>AgCharts, app palette"]
+    R --> C
+    E --> C
+```
+
+<table>
+  <tr>
+    <td width="50%" valign="top"><img src="docs/screenshots/sessions.png" alt="The coding sessions grid"><br><b>Coding sessions</b>, an AG Grid.</td>
+    <td width="50%" valign="top"><img src="docs/screenshots/maintainers.png" alt="The maintainers grid"><br><b>Maintainers</b>, an AG Grid.</td>
+  </tr>
+</table>
+
+The payout and money-records screens [above](#a-look-at-the-app) show the other grids, and the reviewed session shows the comparison chart.
+
+### Render: hosting
+
+The [live app](https://upstream-vvua.onrender.com) runs on Render as **one web service**, defined in [`render.yaml`](render.yaml).
+
+- **One service runs everything.** Express serves the API, the live event stream and the built dashboard from the same address. So your browser, the Claude Code hook, PayPal's webhooks and GitHub sign-in all talk to one place, and sign-in cookies stay on one site.
+- **Build and run.** Render runs `npm ci --include=dev && npm run build`, then `npm start`, on Node 24 and the `0.5c-512mb` plan in Oregon, and checks `/api/health` before sending traffic to a new deploy.
+- **A persistent disk holds the data.** A 1 GB disk mounted at `/var/data` holds the SQLite file (`DATABASE_PATH=/var/data/upstream.db`). Render's normal filesystem is reset on every deploy, so accounts and money records couldn't live there, which is why the free plan isn't used. The trade-off is that a service with a disk can't do zero-downtime deploys, so each deploy takes it offline for about a minute.
+- **The address comes from Render.** The server reads `RENDER_EXTERNAL_URL` and uses it for PayPal's return pages and webhook, GitHub's sign-in callbacks, and the command that connects your agent.
+- **Secrets stay out of the repo.** `render.yaml` lists every setting. Render generates `ADMIN_TOKEN` and `INGEST_TOKEN`, and the PayPal, Meta and GitHub keys are entered in Render.
+- **Real visitor addresses.** We measured how Render forwards a request: the visitor's address, then a Cloudflare edge, then Render's load balancer, with a local proxy connecting to the app. So `TRUST_PROXY_HOPS=3`, and `/check` limits each visitor on their own address, which a visitor can't fake by sending their own header.
+- **Live streaming works through it.** On the live app, the first event of the money stream arrives in about 0.3 s and the keep-alive pings arrive every 15 seconds, on time, so the money screen updates live.
+
+```mermaid
+flowchart LR
+    V["Your browser"] --> CF["Cloudflare"]
+    HK["Claude Code hook"] --> CF
+    WH["PayPal webhooks"] --> CF
+    CF --> LB["Render load balancer"]
+    LB --> LP["local proxy"]
+    LP --> APP
+    subgraph RS["Render web service"]
+        APP["Node.js 24 and Express<br/>API, live stream, dashboard"]
+        DISK[("1 GB disk<br/>/var/data/upstream.db")]
+        APP <--> DISK
+    end
+    APP --> OUT["PayPal API, Meta Muse Spark,<br/>GitHub, deps.dev, ecosyste.ms"]
+    GH["GitHub repo"] -->|"npm ci --include=dev, npm run build"| RS
+```
 
 ---
 
