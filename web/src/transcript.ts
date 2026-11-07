@@ -67,10 +67,38 @@ export function clipStrings<T>(value: T, depth = 0): T {
   return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, clipStrings(v, depth + 1)])) as T;
 }
 
+// Secret values inside the text a tool call carries: a command that writes .env, code with a key pasted in, a file's first lines.
+// The name stays and only the value is replaced, so `PAYPAL_CLIENT_SECRET=•••` still reads as what it was.
+// The same patterns are in hook/upstream-hook.mjs; server/test/transcript.test.ts keeps them in step.
+export const SECRET_ASSIGN = /((?:\b|["'])[A-Za-z0-9_.-]*(?:secret|token|passw(?:or)?d|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?id|credential)[A-Za-z0-9_-]*["']?\s*[:=]\s*)(?:"([^"\s]{8,})"|'([^'\s]{8,})'|(?=[^\s"'`;&|,)}]*\d)([^\s"'`;&|,)}]{12,}))/gi;
+export const SECRET_HEADER = /\b(Bearer|Basic)\s+([A-Za-z0-9._~+/-]{16,}=*)/g;
+export const SECRET_FLAG = /(--?(?:token|password|passwd|secret|api-key|apikey|client-secret)[= ]+)(?!-)(\S{8,})/gi;
+export const SECRET_SHAPE = /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|sk-(?:ant-)?[A-Za-z0-9_-]{24,}|rnd_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35})\b/g;
+export const PRIVATE_KEY_BLOCK = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g;
+export const REDACTED = "[redacted by upstream]";
+
+/** Replaces secret values in one string. Text without anything secret-looking comes back unchanged. */
+export function redactSecrets(text: string): string {
+  return text
+    .replace(PRIVATE_KEY_BLOCK, REDACTED)
+    .replace(SECRET_SHAPE, REDACTED)
+    .replace(SECRET_ASSIGN, (_m, head: string, dq?: string, sq?: string) => `${head}${dq !== undefined ? `"${REDACTED}"` : sq !== undefined ? `'${REDACTED}'` : REDACTED}`)
+    .replace(SECRET_HEADER, (_m, scheme: string) => `${scheme} ${REDACTED}`)
+    .replace(SECRET_FLAG, (_m, flag: string) => `${flag}${REDACTED}`);
+}
+
+/** redactSecrets on every string inside a value, however deep. */
+export function redactSecretsDeep<T>(value: T, depth = 0): T {
+  if (typeof value === "string") return redactSecrets(value) as T;
+  if (!value || typeof value !== "object" || depth > 8) return value;
+  if (Array.isArray(value)) return value.map((v) => redactSecretsDeep(v, depth + 1)) as T;
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactSecretsDeep(v, depth + 1)])) as T;
+}
+
 /**
  * The hook's redaction, plus one rule: tool output is only kept for reads of dependency files, the one place evidence uses it.
  * In a session file, Bash output, Grep lines and Edit's originalFile all carry the person's own code, which must stay in their browser.
- * The server applies this again to everything it receives.
+ * Secret values are blanked in whatever is left. The server applies this again to everything it receives, from the hook too.
  */
 export function redactEvent<E extends Pick<TranscriptEvent, "hook_event_name"> & { tool_name?: string; tool_input?: Record<string, unknown>; tool_response?: unknown; upstream?: { file_head?: string; file_head_truncated?: boolean } }>(event: E): E {
   if (event.hook_event_name !== "PostToolUse") return event;
@@ -80,8 +108,9 @@ export function redactEvent<E extends Pick<TranscriptEvent, "hook_event_name"> &
     const { file_head: _head, file_head_truncated: _truncated, ...upstream } = event.upstream ?? {};
     return { ...event, tool_input: { file_path: file, redacted: true }, tool_response: { redacted: true }, upstream };
   }
-  if (event.tool_name === "Read" && DEPENDENCY_FILE.test(file)) return event;
-  return { ...event, tool_response: { omitted: true } };
+  const upstream = event.upstream && typeof event.upstream.file_head === "string" ? { ...event.upstream, file_head: redactSecrets(event.upstream.file_head) } : event.upstream;
+  const kept = event.tool_name === "Read" && DEPENDENCY_FILE.test(file);
+  return { ...event, tool_input: redactSecretsDeep(input), tool_response: kept ? event.tool_response : { omitted: true }, ...(upstream ? { upstream } : {}) };
 }
 
 /** Removes the "   12→" or "12<tab>" line numbers from a Read result (real files use the tab form; older ones used the arrow), and the reminder the agent gets after a read. */

@@ -117,15 +117,41 @@ function sentKey(sessionId, key) {
   } catch {}
 }
 
+// Secret values inside a command or code: the name stays, the value goes. Same patterns as web/src/transcript.ts.
+const SECRET_ASSIGN = /((?:\b|["'])[A-Za-z0-9_.-]*(?:secret|token|passw(?:or)?d|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?id|credential)[A-Za-z0-9_-]*["']?\s*[:=]\s*)(?:"([^"\s]{8,})"|'([^'\s]{8,})'|(?=[^\s"'`;&|,)}]*\d)([^\s"'`;&|,)}]{12,}))/gi;
+const SECRET_HEADER = /\b(Bearer|Basic)\s+([A-Za-z0-9._~+/-]{16,}=*)/g;
+const SECRET_FLAG = /(--?(?:token|password|passwd|secret|api-key|apikey|client-secret)[= ]+)(?!-)(\S{8,})/gi;
+const SECRET_SHAPE = /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|sk-(?:ant-)?[A-Za-z0-9_-]{24,}|rnd_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35})\b/g;
+const PRIVATE_KEY_BLOCK = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g;
+const REDACTED = "[redacted by upstream]";
+
+function redactSecrets(text) {
+  return text
+    .replace(PRIVATE_KEY_BLOCK, REDACTED)
+    .replace(SECRET_SHAPE, REDACTED)
+    .replace(SECRET_ASSIGN, (_m, head, dq, sq) => `${head}${dq !== undefined ? `"${REDACTED}"` : sq !== undefined ? `'${REDACTED}'` : REDACTED}`)
+    .replace(SECRET_HEADER, (_m, scheme) => `${scheme} ${REDACTED}`)
+    .replace(SECRET_FLAG, (_m, flag) => `${flag}${REDACTED}`);
+}
+
+function redactDeep(value, depth = 0) {
+  if (typeof value === "string") return redactSecrets(value);
+  if (!value || typeof value !== "object" || depth > 8) return value;
+  if (Array.isArray(value)) return value.map((v) => redactDeep(v, depth + 1));
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactDeep(v, depth + 1)]));
+}
+
 function redact(payload) {
   const input = payload.tool_input ?? {};
   const file = input.file_path ?? input.notebook_path ?? "";
   if (file && SECRET_FILE.test(file)) {
     payload.tool_input = { file_path: file, redacted: true };
     payload.tool_response = { redacted: true };
+    return payload;
   }
-  if (payload.tool_name === "Read" && !/node_modules|site-packages|dist-packages/.test(file)) {
-    // Only dependency sources need their contents; your own files are reduced to their path.
+  payload.tool_input = redactDeep(input);
+  if (!(payload.tool_name === "Read" && /node_modules|site-packages|dist-packages/.test(file))) {
+    // Only dependency sources need their contents. Command output, search results and your own files stay on your machine.
     payload.tool_response = { omitted: true };
   }
   return payload;
@@ -229,7 +255,7 @@ async function main() {
     if (["Edit", "MultiEdit", "Write"].includes(payload.tool_name) && file && SOURCE_FILE.test(file) && !payload.tool_input.redacted) {
       try {
         const head = fs.readFileSync(file, "utf8");
-        payload.upstream.file_head = head.slice(0, FILE_HEAD);
+        payload.upstream.file_head = redactSecrets(head.slice(0, FILE_HEAD));
         payload.upstream.file_head_truncated = head.length > FILE_HEAD;
       } catch {}
     }

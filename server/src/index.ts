@@ -8,6 +8,7 @@ import { config, features, repoRoot } from "./config.ts";
 import { db, getSetting, initDb, json, LOCAL_USER, now } from "./db.ts";
 import { ingest, type IngestPayload } from "./evidence/ingest.ts";
 import { cleanTranscriptEvents, importTranscript } from "./evidence/import.ts";
+import { clipStrings, redactEvent } from "../../web/src/transcript.ts";
 import { buildCandidates } from "./evidence/candidates.ts";
 import { activeRun, attributeSession, runsForSession, setActiveRun } from "./attribution/run.ts";
 import { evalReport, LABELS, labelsAreBlind, saveLabels } from "./attribution/eval.ts";
@@ -176,7 +177,8 @@ app.post("/api/ingest", (req, res) => {
   const batch = Array.isArray(req.body) ? (req.body as IngestPayload[]) : [req.body as IngestPayload];
   const results = batch.map((p) => {
     try {
-      return ingest(p, owner);
+      // The hook already redacts on the person's machine; this repeats it, for an older hook or any other client.
+      return ingest(clipStrings(redactEvent(p as Parameters<typeof redactEvent>[0])) as IngestPayload, owner);
     } catch (e) {
       return { error: String(e) };
     }

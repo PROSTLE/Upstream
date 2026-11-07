@@ -9,7 +9,7 @@ import { db, openDb, setDbForTests } from "../src/db.ts";
 import { buildCandidates } from "../src/evidence/candidates.ts";
 import { ingest } from "../src/evidence/ingest.ts";
 import { responseText } from "../src/evidence/extract.ts";
-import { RECORDED_TOOLS, SECRET_FILE, SOURCE_FILE, chunkEvents, describeStats, isKnownWarning, redactEvent, stripLineNumbers, transcriptToEvents, PYTHON_WARNING } from "../../web/src/transcript.ts";
+import { PRIVATE_KEY_BLOCK, REDACTED, SECRET_ASSIGN, SECRET_FLAG, SECRET_HEADER, SECRET_SHAPE, redactSecrets, RECORDED_TOOLS, SECRET_FILE, SOURCE_FILE, chunkEvents, describeStats, isKnownWarning, redactEvent, stripLineNumbers, transcriptToEvents, PYTHON_WARNING } from "../../web/src/transcript.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = fs.readFileSync(path.join(here, "fixtures", "transcript-small.jsonl"), "utf8");
@@ -24,6 +24,41 @@ test("patterns stay the same as the live hook's", () => {
   assert.ok(hook.includes(`const SOURCE_FILE = /${SOURCE_FILE.source}/i;`), "SOURCE_FILE");
   const matcher = JSON.parse(fs.readFileSync(path.join(here, "..", "..", "hook", "hooks.json"), "utf8")).hooks.PostToolUse[0].matcher as string;
   assert.equal(RECORDED_TOOLS.source, `^(?:${matcher})$`);
+  for (const [name, re] of Object.entries({ SECRET_ASSIGN, SECRET_HEADER, SECRET_FLAG, SECRET_SHAPE, PRIVATE_KEY_BLOCK })) {
+    assert.ok(hook.includes(`const ${name} = /${re.source}/${re.flags};`), name);
+  }
+});
+
+test("secret values in commands and code are blanked, and ordinary code is left alone", () => {
+  // Made-up values, shaped like the real thing.
+  const key = "AbC123dEf456GhI789jKl012";
+  const cases: [string, string][] = [
+    [`cat > .env <<'EOF'\nPAYPAL_CLIENT_ID=${key}\nPAYPAL_CLIENT_SECRET=${key}\nMODEL_API_KEY=${key}\nPORT=8787\nEOF`, `PAYPAL_CLIENT_ID=${REDACTED}\nPAYPAL_CLIENT_SECRET=${REDACTED}\nMODEL_API_KEY=${REDACTED}\nPORT=8787`],
+    [`export GITHUB_TOKEN="${key}" && npm start`, `export GITHUB_TOKEN="${REDACTED}" && npm start`],
+    [`$env:ADMIN_TOKEN = '${key}'; node x.js`, `$env:ADMIN_TOKEN = '${REDACTED}'; node x.js`],
+    [`node -e "process.env.MODEL_API_KEY='${key}'"`, `process.env.MODEL_API_KEY='${REDACTED}'`],
+    [`curl -H "Authorization: Bearer ${key}" https://api`, `Authorization: Bearer ${REDACTED}"`],
+    [`node hook/install.mjs --url https://x --token ${key}`, `--token ${REDACTED}`],
+    [`git push https://ghp_${"a1B2".repeat(9)}@github.com/x`, `https://${REDACTED}@github.com`],
+    [`-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----`, REDACTED],
+    [`const cfg = { "apiKey": "${key}" };`, `"apiKey": "${REDACTED}"`],
+  ];
+  for (const [input, expected] of cases) {
+    const out = redactSecrets(input);
+    assert.ok(out.includes(expected), `${input.slice(0, 40)} → ${out}`);
+    assert.ok(!out.includes(key) && !out.includes("a1B2a1B2"), `leaked: ${out}`);
+  }
+  const ordinary = [
+    `import { z } from "zod";\nconst token = await getToken();\nconst apiKey = process.env.MODEL_API_KEY;`,
+    `const client = new Client({ clientCredentialsAuthCredentials: { oAuthClientId: config.PAYPAL_CLIENT_ID } });`,
+    `{ "dependencies": { "js-tokens": "^4.0.0", "zod": "^3.23.8" } }`,
+    `npm install zod && npx tsc --noEmit`,
+    `"integrity": "sha512-EKN1vKAMcZ8MlYMpaNuRrv4o0e9yhJ8EvVHpakMvc3dq8BS0K6LZLQGDF1D2ySFm"`,
+  ];
+  for (const text of ordinary) assert.equal(redactSecrets(text), text);
+  const event = redactEvent({ hook_event_name: "PostToolUse" as const, tool_name: "Bash", tool_input: { command: `PAYPAL_CLIENT_SECRET=${key} npm run setup:paypal` }, tool_response: { stdout: `secret: ${key}` }, upstream: {} });
+  assert.equal((event.tool_input as { command: string }).command, `PAYPAL_CLIENT_SECRET=${REDACTED} npm run setup:paypal`);
+  assert.deepEqual(event.tool_response, { omitted: true });
 });
 
 test("pairs each tool call with its result and counts what it kept", () => {
