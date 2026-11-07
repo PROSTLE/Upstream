@@ -27,7 +27,7 @@ Dependency lists can't tell the library your agent leaned on all afternoon from 
 | Money only moves on screen when PayPal confirms it | A second real sandbox payout (batch `LK2R3WYGYTZM2`, $1.70) was watched live. Each step moved when PayPal's reply or its API confirmed it, every event appeared once, and the totals added up to the cent throughout. That run read statuses back from PayPal's API; webhook events are covered by tests, not a live delivery yet |
 | People's money and data stay apart | [Tests](server/test/workspaces.test.ts) act as one person attacking another over HTTP, and a real two-person run on the sandbox and live AI leaked nothing |
 
-**Not done yet, stated plainly:** that run is one session, and the payout went to a test package this project owns (`split-cents`), so it proves the system works, not that anyone outside wants it. `split-cents` isn't on npm yet, so its repo link came from its own `package.json`, and the dashboard labels it that way. A one-time top-up hasn't been approved through PayPal, Log in with PayPal is off, and cancelling an unclaimed payout and refunds have only been tested against a stand-in for PayPal. No statement has been issued live: the sandbox app doesn't have PayPal's Invoicing permission switched on yet, and PayPal answers 403 until it does. No real labelled sessions are on the AI accuracy page yet. There's no permanent hosted demo.
+**Not done yet, stated plainly:** that run is one session, and the payout went to a test package this project owns (`split-cents`), so it proves the system works, not that anyone outside wants it. `split-cents` isn't on npm yet, so its repo link came from its own `package.json`, and the dashboard labels it that way. A one-time top-up hasn't been approved through PayPal, Log in with PayPal is off, and cancelling an unclaimed payout and refunds have only been tested against a stand-in for PayPal. No statement has been issued live: the sandbox app doesn't have PayPal's Invoicing permission switched on yet, and PayPal answers 403 until it does. No real labelled sessions are on the AI accuracy page yet.
 
 ---
 
@@ -291,7 +291,7 @@ The settlement test drives plan → approve → execute twice (exactly one PayPa
 | **fetch-event-source** (`@microsoft/fetch-event-source`) | Runtime: the dashboard's live money stream, with the sign-in header a browser's own EventSource can't send. |
 | **deps.dev API v3**, **ecosyste.ms Packages API**, **npm registry**, **GitHub REST API** | Package → repo, funding links, FUNDING.yml, repo permissions, and Sign in with GitHub. |
 | **AG Grid Community** + **AG Charts Community** | Sessions, packages, payout items, allocations, ledger and API-audit grids; attribution and eval charts. |
-| **Render** | Optional hosting via `render.yaml`. |
+| **Render** | Hosts the live app, from `render.yaml`: one web service with a persistent disk for SQLite. |
 | Lucide, Simple Icons, Inter, JetBrains Mono | UI icons and type. The PayPal mark is PayPal's own file from paypalobjects.com. |
 | **resvg** (`@resvg/resvg-js`) | Build time: renders the app icons from the hand-drawn SVG mark. |
 | **Claude Code** (as a coding assistant) | Used to help write this project, including its benchmark scenarios. |

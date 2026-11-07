@@ -23,6 +23,9 @@ const fraction = z.coerce.number().min(0).max(1);
 
 const schema = z.object({
   PORT: z.coerce.number().int().positive().default(8787),
+  // How many proxies sit in front of the server, so the public check's per-address limit counts each visitor.
+  // 1 for a tunnel. Render has 3: Cloudflare, its load balancer and a local proxy.
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(1),
   PUBLIC_BASE_URL: z.string().url(),
   DATABASE_PATH: z.string().default("./data/upstream.db"),
   ADMIN_TOKEN: optional,

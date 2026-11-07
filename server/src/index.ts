@@ -59,8 +59,9 @@ failInterruptedChecks();
 backfillMoneyEvents();
 const app = express();
 app.disable("x-powered-by");
-// One proxy in front (Render or a tunnel), so req.ip is the client, which the public check's limits count by.
-app.set("trust proxy", 1);
+// The proxies in front (TRUST_PROXY_HOPS) are counted from the right of X-Forwarded-For, so req.ip is the visitor
+// and anything a visitor puts in that header themselves is ignored. The public check's limits count by it.
+app.set("trust proxy", config.TRUST_PROXY_HOPS);
 
 const safeEqual = (a: string, b: string) => {
   const x = Buffer.from(a);

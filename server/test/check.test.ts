@@ -114,10 +114,11 @@ test("after 24 hours everything is gone, in an order the foreign keys accept", a
   assert.equal((db().prepare("SELECT COUNT(*) AS n FROM public_checks").get() as { n: number }).n, others, "other checks are untouched");
 });
 
-test("over HTTP, signed out: the sample flow works, an unknown id is a 404, and the hard limit turns an address away", { timeout: 90_000 }, async () => {
+/** Starts the real server on a fresh database, with no PayPal, AI or registry access, and returns its address. */
+async function startServer(extra: Record<string, string> = {}): Promise<string> {
   const port = 20000 + Math.floor(Math.random() * 20000);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "upstream-check-"));
-  const env = { ...process.env, PORT: String(port), DATABASE_PATH: path.join(dir, "t.db"), ADMIN_TOKEN: "admin-c", INGEST_TOKEN: "ingest-c", DASHBOARD_ACCESS: "private", PUBLIC_BASE_URL: `http://localhost:${port}`, PAYPAL_CLIENT_ID: "", PAYPAL_CLIENT_SECRET: "", MODEL_API_KEY: "", PUBLIC_CHECK_MAX_PER_IP_PER_HOUR: "1", DEPSDEV_API_BASE: "http://127.0.0.1:9", ECOSYSTEMS_API_BASE: "http://127.0.0.1:9", NPM_REGISTRY_BASE: "http://127.0.0.1:9" };
+  const env = { ...process.env, PORT: String(port), DATABASE_PATH: path.join(dir, "t.db"), ADMIN_TOKEN: "admin-c", INGEST_TOKEN: "ingest-c", DASHBOARD_ACCESS: "private", PUBLIC_BASE_URL: `http://localhost:${port}`, PAYPAL_CLIENT_ID: "", PAYPAL_CLIENT_SECRET: "", MODEL_API_KEY: "", PUBLIC_CHECK_MAX_PER_IP_PER_HOUR: "1", DEPSDEV_API_BASE: "http://127.0.0.1:9", ECOSYSTEMS_API_BASE: "http://127.0.0.1:9", NPM_REGISTRY_BASE: "http://127.0.0.1:9", ...extra };
   const p = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", path.join(here, "..", "src", "index.ts")], { env, stdio: ["ignore", "pipe", "pipe"] });
   running.push(p);
   await new Promise<void>((resolve, reject) => {
@@ -125,7 +126,23 @@ test("over HTTP, signed out: the sample flow works, an unknown id is a 404, and 
     p.stdout!.on("data", (d) => String(d).includes("server on") && (clearTimeout(t), resolve()));
     p.on("exit", (c) => reject(new Error(`server exited ${c}`)));
   });
-  const base = `http://127.0.0.1:${port}`;
+  return `http://127.0.0.1:${port}`;
+}
+
+test("behind Render's proxies, each visitor has their own limit, and a forged address changes nothing", { timeout: 90_000 }, async () => {
+  const base = await startServer({ TRUST_PROXY_HOPS: "3" });
+  // What Render forwarded on Nov 7, 2026: the visitor, a Cloudflare edge that varies, then Render's load balancer. A local proxy connects.
+  const lb = "10.194.213.217";
+  const post = (chain: string) => realFetch(`${base}/api/check`, { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": chain }, body: JSON.stringify({ events: converted.events, file_name: "s.jsonl" }) });
+  // Limit 1 per hour, hard stop at 4.
+  for (let i = 1; i <= 4; i++) assert.equal((await post(`198.51.100.1, 104.23.160.${i}, ${lb}`)).status, 200);
+  assert.equal((await post(`198.51.100.1, 172.69.178.208, ${lb}`)).status, 429, "the same visitor through another Cloudflare edge is still the same visitor");
+  assert.equal((await post(`198.51.100.2, 172.70.219.98, ${lb}`)).status, 200, "another visitor has their own limit");
+  assert.equal((await post(`198.51.100.2, 198.51.100.1, 104.23.160.9, ${lb}`)).status, 429, "an address put in front by the visitor is ignored");
+});
+
+test("over HTTP, signed out: the sample flow works, an unknown id is a 404, and the hard limit turns an address away", { timeout: 90_000 }, async () => {
+  const base = await startServer();
   const post = () => realFetch(`${base}/api/check`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ events: converted.events, file_name: "s.jsonl", stats: converted.stats, warnings: converted.warnings }) });
   const first = await post();
   assert.equal(first.status, 200);

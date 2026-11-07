@@ -18,6 +18,9 @@ services:
         value: "24"
       - key: DATABASE_PATH
         value: /var/data/upstream.db
+      # Render forwards "visitor, Cloudflare edge, Render load balancer" and a local proxy connects (measured Nov 7, 2026).
+      - key: TRUST_PROXY_HOPS
+        value: "3"
       # PUBLIC_BASE_URL isn't listed: the server uses Render's RENDER_EXTERNAL_URL. Set it only for a custom domain.
       - key: ADMIN_TOKEN
         generateValue: true
