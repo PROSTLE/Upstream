@@ -228,6 +228,7 @@ flowchart TB
 |---|---|
 | The whole loop works | Real Claude Code session, live Muse review, maintainer verified from GitHub, real sandbox payout `D85JLLSK5RWHN` ($3.59, PayPal fee $0.25). Sending twice paid once, PayPal rejected a replay, and signed webhooks arrived. |
 | Funding through PayPal's Server SDK | Subscription `I-743R8NEH7WYM`: $10.00 paid, $0.84 fee. A $1.00 one-time top-up on the live app: order created, approved on PayPal's sandbox page, captured, confirmed by a signed webhook, and booked once with PayPal's $0.52 fee. Every step went through the SDK. |
+| Statements through PayPal's Agent Toolkit | November's statement was issued on the live app as PayPal sandbox invoice `INV2-EK49-7V57-EUFZ-DMDY`, marked paid, recording the $10.00 subscription payment and the $1.00 top-up. It emailed nobody. PayPal wouldn't attach the transaction ids to the invoice's payments, so each id is in its payment's note. |
 | Money moves on screen only when PayPal confirms it | A second payout (`LK2R3WYGYTZM2`, $1.70) watched live. Totals added up to the cent throughout. |
 | The AI finds what dependency lists miss | 12 scripted scenarios, 3 runs each: Muse Spark 12 of 12 every run, counting imports 7 of 12. |
 | On real sessions, it's as accurate as counting imports, with fairer shares | Six real Claude Code sessions that built Upstream, 63 packages labelled blind, before any review ran. Muse Spark: precision 0.78, recall 0.97, F1 0.86. Counting imports: 0.80, 0.95, 0.87. Muse's shares are closer to the labels (error 0.67 against 0.86), but it also pays small shares to build tools such as `typescript` and `vite`. The scores are live on the [AI accuracy](https://upstream-vvua.onrender.com/eval) page. |
@@ -260,7 +261,7 @@ Counting imports scores precision 0.85 and recall 0.79. Muse Spark scores 1.00 a
 
 </details>
 
-**Not done yet.** It's one real session, and the payout went to a test package this project owns, so it proves the system works, not demand. Log in with PayPal is off. Unclaimed cancels and refunds are tested only against a stand-in for PayPal. No statement has been issued live, because the sandbox app lacks PayPal's Invoicing permission. The real-session labels were written by Claude, the coding assistant on this project, from each session's transcript, with one rule: *meaningful* if code the session wrote into Upstream relies on the package, *incidental* for build and type tooling, fonts and throwaway scripts, *not used* otherwise. They're blind, but they're not an independent person's judgement.
+**Not done yet.** It's one real session, and the payout went to a test package this project owns, so it proves the system works, not demand. Log in with PayPal is off. Unclaimed cancels and refunds are tested only against a stand-in for PayPal. The real-session labels were written by Claude, the coding assistant on this project, from each session's transcript, with one rule: *meaningful* if code the session wrote into Upstream relies on the package, *incidental* for build and type tooling, fonts and throwaway scripts, *not used* otherwise. They're blind, but they're not an independent person's judgement.
 
 ---
 
