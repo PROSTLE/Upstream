@@ -13,9 +13,15 @@ export function Policy() {
   const cur = data.pool.currency;
   const rules: { icon: ReactNode; title: string; value: string; env: string; what: string }[] = [
     { icon: <Percent size={16} />, title: "Most one package can get from a session", value: pct(p.max_package_share), env: "POLICY_MAX_PACKAGE_SHARE", what: "Even when one package did everything, it gets at most this share of the session's slice. The rest stays in the pool." },
-    { icon: <Wallet size={16} />, title: "Smallest payout sent", value: moneyStr(p.min_payout, cur), env: "POLICY_MIN_PAYOUT", what: "Smaller amounts carry over for that maintainer instead of costing a PayPal fee each." },
+    {
+      icon: <Wallet size={16} />,
+      title: "Smallest payout sent",
+      value: moneyStr(p.payout_threshold, cur),
+      env: "POLICY_MAX_FEE_SHARE, POLICY_PAYOUT_FEE_ESTIMATE, POLICY_MIN_PAYOUT",
+      what: `Smaller amounts wait for that maintainer, so PayPal's ${moneyStr(p.fee_estimate, cur)} fee stays at or under ${pct(p.max_fee_share)} of a payout. ${p.fee_estimate_source === "paypal" ? "That fee is the last one PayPal reported." : "PayPal hasn't reported a fee yet, so that's the default estimate."} It never goes below ${moneyStr(p.min_payout, cur)}.`,
+    },
     { icon: <Wallet size={16} />, title: "Largest single payout item", value: moneyStr(p.max_payout, cur), env: "POLICY_MAX_PAYOUT", what: "One item never goes above this. Older held money for the repo goes in first; anything over the cap stays in the shared pool." },
-    { icon: <Scale size={16} />, title: "Fee reserve while a batch is open", value: pct(p.fee_reserve, 1), env: "POLICY_PAYOUT_FEE_RESERVE", what: "Kept back from the pool until PayPal reports each item's real fee, then released." },
+    { icon: <Scale size={16} />, title: "Fee reserve while a batch is open", value: pct(p.fee_reserve, 1), env: "POLICY_PAYOUT_FEE_RESERVE", what: `Each item keeps back this share or PayPal's ${moneyStr(p.fee_estimate, cur)} fee, whichever is more, until PayPal reports the real fee. Then the rest is released.` },
     { icon: <Hourglass size={16} />, title: "How long money waits for an unclaimed repo", value: `${p.reserve_days} days`, env: "POLICY_RESERVE_DAYS", what: "After this, an unclaimed repo's share goes back to the pool for other maintainers." },
     { icon: <Clock size={16} />, title: "When an unclaimed PayPal payout is cancelled", value: `${p.cancel_unclaimed_after_days} days`, env: "POLICY_CANCEL_UNCLAIMED_AFTER_DAYS", what: `PayPal returns unclaimed payouts after 30 days anyway; ${data.brand} cancels sooner, re-holds the money and asks the maintainer to fix their email.` },
     { icon: <Wallet size={16} />, title: "Largest one-time top-up", value: p.max_topup ? moneyStr(p.max_topup, cur) : `No ${data.brand} cap`, env: "POLICY_MAX_TOPUP", what: p.max_topup ? "Dashboard top-ups above this are refused." : "Only PayPal's own limits apply to top-ups from the dashboard." },

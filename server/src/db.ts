@@ -7,6 +7,11 @@ export type DB = DatabaseSync;
 /** The server's operator: ADMIN_TOKEN and INGEST_TOKEN act for this user, and it owns everything recorded before people had their own space. */
 export const LOCAL_USER = "local";
 
+// Throwaway owners of public /check runs. They never count in anything shown across people, and can never be paid out.
+export const CHECK_USER_PREFIX = "check_";
+export const isCheckUser = (userId: string) => userId.startsWith(CHECK_USER_PREFIX);
+export const NOT_CHECK_USER = "user_id NOT LIKE 'check\\_%' ESCAPE '\\'";
+
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
@@ -75,7 +80,7 @@ CREATE TABLE IF NOT EXISTS attribution_runs (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id),
   created_at TEXT NOT NULL,
-  method TEXT NOT NULL,                         -- llm | baseline
+  method TEXT NOT NULL,                         -- llm | baseline | manifest (equal split of the dependency list, for comparison only, never paid)
   model TEXT,
   candidates_json TEXT NOT NULL,
   raw_output_json TEXT,
@@ -266,6 +271,74 @@ CREATE TABLE IF NOT EXISTS paypal_calls (
   duration_ms INTEGER,
   error_name TEXT
 );
+
+-- Public /check runs. Each belongs to a throwaway user and is deleted, with everything under it, at expires_at.
+CREATE TABLE IF NOT EXISTS public_checks (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  ip_hash TEXT NOT NULL,                        -- sha256(ip + server secret), only used to count requests
+  llm_used INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'running',       -- running | done | failed
+  ai_state TEXT NOT NULL,                       -- running | done | paused | off | failed
+  file_name TEXT,
+  stats_json TEXT,
+  warnings_json TEXT
+);
+CREATE INDEX IF NOT EXISTS public_checks_expires ON public_checks(expires_at);
+CREATE INDEX IF NOT EXISTS public_checks_ip ON public_checks(ip_hash, created_at);
+
+-- Every money movement, for the live diagram. Only what PayPal confirmed, or Upstream's own holds (labelled as such). Never an email address.
+CREATE TABLE IF NOT EXISTS money_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL UNIQUE,
+  type TEXT NOT NULL,                           -- ledger | payout_status | batch | earmark
+  at TEXT NOT NULL,                             -- when it happened (ledger occurred_at, PayPal time, or now)
+  created_at TEXT NOT NULL,
+  from_node TEXT,                               -- both null: shown in the event list, not animated
+  to_node TEXT,
+  amount_minor INTEGER NOT NULL,                -- always positive; direction comes from from_node and to_node
+  currency TEXT NOT NULL,
+  label TEXT NOT NULL,                          -- one plain sentence
+  kind TEXT,
+  ref_type TEXT,
+  ref_id TEXT,
+  settlement_id TEXT,
+  repo TEXT,
+  status_from TEXT,
+  status_to TEXT,
+  paypal_ids_json TEXT,                         -- {transaction_id, payout_item_id, payout_batch_id, capture_id, order_id, subscription_id} when known
+  trigger_json TEXT NOT NULL,                   -- {via:"webhook", event_id, event_type, verified:true} | {via:"api", action} | {via:"none"}
+  backfilled INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS money_events_user ON money_events(user_id, id);
+
+-- Who told a maintainer about held money. A person always does the telling; this only remembers that they did.
+CREATE TABLE IF NOT EXISTS invites (
+  repo TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  channel TEXT NOT NULL,                        -- github_issue | copied_text | copied_link
+  PRIMARY KEY (repo, user_id)
+);
+
+-- Monthly funding statements, issued as PayPal invoices. One per person per month.
+CREATE TABLE IF NOT EXISTS statements (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  month TEXT NOT NULL,                          -- YYYY-MM
+  invoice_id TEXT,
+  status TEXT NOT NULL,                         -- CREATING until PayPal answers, then PayPal's own invoice status
+  view_url TEXT,
+  recipient TEXT,
+  user_note TEXT,
+  payments_json TEXT NOT NULL DEFAULT '[]',     -- [{transaction_id, method}]: method OTHER means PayPal turned down its own id for this invoice
+  created_at TEXT NOT NULL,
+  UNIQUE (user_id, month)
+);
 `;
 
 // Everything a person owns. Packages and maintainer claims stay shared: a maintainer verifies once, for everyone.
@@ -277,6 +350,9 @@ function migrate(d: DatabaseSync) {
     if (!cols.some((c) => c.name === "user_id")) d.exec(`ALTER TABLE ${table} ADD COLUMN user_id TEXT NOT NULL DEFAULT '${LOCAL_USER}'`);
     d.exec(`CREATE INDEX IF NOT EXISTS ${table}_user ON ${table}(user_id)`);
   }
+  // Where a session's events came from: "hook" (live) or "transcript" (imported from a session file).
+  const sessionCols = d.prepare("PRAGMA table_info(sessions)").all() as { name: string }[];
+  if (!sessionCols.some((c) => c.name === "source")) d.exec("ALTER TABLE sessions ADD COLUMN source TEXT NOT NULL DEFAULT 'hook'");
   d.prepare("INSERT OR IGNORE INTO users(id, created_at) VALUES (?, ?)").run(LOCAL_USER, now());
 }
 

@@ -58,7 +58,7 @@ const hostOf = (u?: string | null) => {
   }
 };
 
-export async function buildCandidates(sessionId: string, opts: { resolve?: boolean } = {}): Promise<CandidateSet> {
+export async function buildCandidates(sessionId: string, opts: { resolve?: boolean; maxResolve?: number } = {}): Promise<CandidateSet> {
   const session = db().prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) as any;
   if (!session) throw new Error(`Unknown session ${sessionId}`);
   const manifest = json<ManifestState>(session.manifest_json, {});
@@ -117,7 +117,7 @@ export async function buildCandidates(sessionId: string, opts: { resolve?: boole
   declared.npm.forEach((n) => add("npm", n));
   declared.pypi.forEach((n) => add("pypi", n));
 
-  if (opts.resolve !== false) await resolveMany([...keys.values()]);
+  if (opts.resolve !== false) await resolveMany([...keys.values()].slice(0, opts.maxResolve));
   const meta = new Map<string, PackageRecord | undefined>();
   for (const [k, v] of keys) meta.set(k, getPackage(v.ecosystem, v.name));
 

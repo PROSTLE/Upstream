@@ -114,6 +114,7 @@ export function Home() {
               {authError && <div style={{ marginBottom: 16 }}><ErrorBox error={authError} /></div>}
               <div className="home-cta">
                 <SignIn large />
+                {health.publicCheck && <Link className="btn lg" to="/check"><FileSearch size={16} />Check your own session (no install)</Link>}
                 <Link className="btn lg" to="/claim">I maintain open source</Link>
               </div>
               {health.paypalEnv === "sandbox" && <p className="home-note">Test mode: this server uses the PayPal sandbox, so no real money moves.</p>}

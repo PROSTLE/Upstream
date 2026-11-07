@@ -153,15 +153,16 @@ function ledgerMatchesPayPal(list: Item[]): AuditCheck {
 function capsRespected(list: Item[]): AuditCheck {
   const failures: string[] = [];
   for (const i of list) {
-    const params = json<{ params?: { min_payout?: string; max_payout?: string } }>(i.policy_json, {}).params ?? {};
+    const params = json<{ params?: { min_payout?: string; payout_threshold?: string; max_payout?: string } }>(i.policy_json, {}).params ?? {};
     const v = Number(fromMinor(i.amount_minor, i.currency));
+    const floor = params.payout_threshold ?? params.min_payout;
     if (params.max_payout && v > Number(params.max_payout)) failures.push(`${i.sender_item_id}: ${v} is above the cap ${params.max_payout} in force when planned`);
-    if (params.min_payout && v < Number(params.min_payout)) failures.push(`${i.sender_item_id}: ${v} is below the minimum ${params.min_payout} in force when planned`);
+    if (floor && v < Number(floor)) failures.push(`${i.sender_item_id}: ${v} is below the minimum ${floor} in force when planned`);
   }
   return check(
     "payout_caps_respected",
     "Every payout item is within the caps in force when it was planned",
-    "POLICY_MIN_PAYOUT and POLICY_MAX_PAYOUT are recorded with each run and enforced in code.",
+    "The smallest payout worth PayPal's fee and POLICY_MAX_PAYOUT are recorded with each run and enforced in code.",
     list.length,
     failures,
     `${list.length} payout item(s) checked against their run's recorded policy.`,

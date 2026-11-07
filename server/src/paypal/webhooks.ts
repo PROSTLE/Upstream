@@ -42,7 +42,10 @@ export function webhookId(): string | undefined {
   return config.PAYPAL_WEBHOOK_ID ?? getSetting("paypal.webhook_id");
 }
 
-/** Find the webhook for our URL or create it; PayPal requires a public https URL. */
+/**
+ * Find the webhook for our URL or create it; PayPal requires a public https URL.
+ * If the server's address changed, the webhook we already have moves to the new one and keeps its id.
+ */
 export async function ensureWebhook(): Promise<{ id: string; created: boolean } | { skipped: string }> {
   const url = webhookUrl();
   if (!url.startsWith("https://")) {
@@ -65,6 +68,17 @@ export async function ensureWebhook(): Promise<{ id: string; created: boolean } 
     }
     setSetting("paypal.webhook_id", existing.id);
     return { id: existing.id, created: false };
+  }
+  const moved = list.data.webhooks?.find((w) => w.id === webhookId());
+  if (moved) {
+    await paypal("PATCH", `/v1/notifications/webhooks/${moved.id}`, {
+      body: [
+        { op: "replace", path: "/url", value: url },
+        { op: "replace", path: "/event_types", value: SUBSCRIBED_EVENTS.map((name) => ({ name })) },
+      ],
+    });
+    setSetting("paypal.webhook_id", moved.id);
+    return { id: moved.id, created: false };
   }
   const res = await paypal<{ id: string }>("POST", "/v1/notifications/webhooks", {
     body: { url, event_types: SUBSCRIBED_EVENTS.map((name) => ({ name })) },

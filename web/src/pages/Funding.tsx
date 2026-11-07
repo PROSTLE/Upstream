@@ -1,14 +1,16 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Bot, CalendarClock, CheckCircle2, CircleDollarSign, Info, RefreshCw, Repeat, ShieldCheck, Wallet, XCircle } from "lucide-react";
+import { Bot, CalendarClock, CheckCircle2, CircleDollarSign, ExternalLink, Info, ReceiptText, RefreshCw, Repeat, ShieldCheck, Wallet, XCircle } from "lucide-react";
 import { api, useApi } from "../api.ts";
 import { dateTime, money, moneyStr, plural } from "../format.ts";
+import { useMoneyRefresh } from "../money/stream.tsx";
 import { useOverview } from "../overview.tsx";
 import { useBrand } from "../brand.tsx";
-import { ActionButton, BrandIcon, Card, Empty, ErrorBox, Loading, PageHead, Status, Stepper, useToast } from "../ui.tsx";
+import { ActionButton, BrandIcon, Card, Empty, ErrorBox, Loading, Modal, PageHead, Status, Stepper, useToast } from "../ui.tsx";
 
 export function Funding() {
-  const { data, error, loading, reload } = useApi<any>("/api/funding");
+  const { data, error, loading, reload, refresh } = useApi<any>("/api/funding");
+  useMoneyRefresh((e) => e.kind === "FUNDING_GROSS" || e.kind === "FUNDING_FEE", refresh);
   const brand = useBrand();
   const [params] = useSearchParams();
   const toast = useToast();
@@ -114,6 +116,8 @@ export function Funding() {
 
       <TopupCard data={data} onDone={reload} />
 
+      <StatementsCard />
+
       <Card title="Pool reconciliation" sub="Every line is a PayPal-confirmed ledger total" icon={<Wallet size={17} />} tone="violet">
         <div className="summary">
           {rows.map(([label, v, hint]) => (
@@ -135,6 +139,79 @@ export function Funding() {
         </div>
       </Card>
     </div>
+  );
+}
+
+const monthLabel = (month: string) => new Date(`${month}-15T00:00:00Z`).toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone: "UTC" });
+
+/** A document for the books: each PayPal payment, tied to where the money went, as a paid invoice in PayPal. */
+function StatementsCard() {
+  const { data, error, refresh } = useApi<any>("/api/statements");
+  useMoneyRefresh(() => true, refresh);
+  const toast = useToast();
+  const [asking, setAsking] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
+  const issue = async (month: string, to?: string) => {
+    const r = await api<any>(`/api/statements/${month}/issue`, { body: to ? { email: to } : {}, admin: true });
+    toast(r.fell_back?.length ? `Statement issued. PayPal wouldn't link ${plural(r.fell_back.length, "payment")} by id, so the transaction id is in the payment's note.` : "Statement issued in PayPal.");
+    setAsking(null);
+    await refresh();
+  };
+  const cur = data?.currency;
+  return (
+    <Card title="Statements" sub="A monthly document for your books. Each PayPal payment, and where the money went" icon={<ReceiptText size={17} />} tone="violet" id="statements">
+      {error && <ErrorBox error={error} />}
+      {data && !data.months.length && <p className="muted">Nothing to report yet. A statement becomes available once PayPal confirms a payment.</p>}
+      {data && data.months.length > 0 && (
+        <div style={{ overflowX: "auto" }}>
+          <table className="statement-table">
+            <thead>
+              <tr><th>Month</th><th>Received</th><th>Paid to maintainers</th><th>Held</th><th>PayPal fees</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              {data.months.map((m: any) => (
+                <tr key={m.month}>
+                  <td><strong>{monthLabel(m.month)}</strong></td>
+                  <td className="num">{moneyStr(m.received, cur)}</td>
+                  <td className="num">{moneyStr(m.paid, cur)}</td>
+                  <td className="num">{moneyStr(m.held, cur)}</td>
+                  <td className="num">{moneyStr(m.fees, cur)}</td>
+                  <td>
+                    <span className="row" style={{ gap: 8 }}>
+                      {m.statement?.paid && <span className="pill green"><span className="dot" />PAID in PayPal</span>}
+                      {m.statement && !m.statement.paid && <span className="pill amber" title="A step didn't finish. Issuing again continues from there.">{m.statement.status === "CREATING" ? "Not finished" : m.statement.status.replace(/_/g, " ")}</span>}
+                      {m.statement?.view_url && <a className="btn sm" href={m.statement.view_url} target="_blank" rel="noreferrer">Open invoice<ExternalLink size={12} /></a>}
+                      {!m.statement?.paid && (
+                        m.payments === 0
+                          ? <span className="muted small">No payment that month</span>
+                          : !m.statement && !data.default_email
+                            ? <button className="btn sm" onClick={() => setAsking(m.month)}>Issue statement</button>
+                            : <ActionButton className="btn sm" onRun={() => issue(m.month)}>{m.statement ? "Finish statement" : "Issue statement"}</ActionButton>
+                      )}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="muted small" style={{ marginTop: 10 }}>Issued with PayPal Agent Toolkit: create_invoice → send_invoice → record_payment_for_invoice. Nobody gets an email: the invoice only records payments PayPal already confirmed.</p>
+      {asking && (
+        <Modal
+          title={`Statement for ${monthLabel(asking)}`}
+          sub="PayPal invoices need a recipient. Nothing is sent to this address."
+          icon={<ReceiptText size={17} />}
+          onClose={() => setAsking(null)}
+          foot={<ActionButton className="btn primary" disabled={!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())} onRun={() => issue(asking, email.trim())}>Issue statement</ActionButton>}
+        >
+          <div className="field">
+            <label htmlFor="statement-email">Email on the invoice</label>
+            <input id="statement-email" className="input" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </div>
+        </Modal>
+      )}
+    </Card>
   );
 }
 

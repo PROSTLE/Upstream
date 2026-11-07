@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useId, useRef, useSt
 import { siGithub, siNpm, siPypi, siClaude, siMeta } from "simple-icons";
 import {
   AlertTriangle, BookOpen, Check, CheckCircle2, CircleDashed, Code2, Copy, Download, FileSearch, FileCode2, Globe, KeyRound, Loader2,
-  PackagePlus, Search, Sparkles, Terminal, X, XCircle,
+  PackagePlus, Search, Sparkles, Terminal, Upload, X, XCircle,
 } from "lucide-react";
 import { registerTokenPrompt, setAdminToken } from "./api.ts";
 
@@ -231,6 +231,38 @@ export function CheckRow({ ok, label, detail }: { ok: boolean | null; label: Rea
   );
 }
 
+/** A file picker you can also drop files on. The real input stays focusable, so it works from the keyboard. */
+export function DropZone({ label, hint, accept, multiple = true, disabled, onFiles }: { label: ReactNode; hint?: ReactNode; accept?: string; multiple?: boolean; disabled?: boolean; onFiles: (files: File[]) => void }) {
+  const [over, setOver] = useState(false);
+  return (
+    <label
+      className={`dropzone${over ? " over" : ""}${disabled ? " disabled" : ""}`}
+      onDragOver={(e) => { e.preventDefault(); if (!disabled) setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setOver(false);
+        if (!disabled && e.dataTransfer.files.length) onFiles([...e.dataTransfer.files]);
+      }}
+    >
+      <input
+        type="file"
+        className="sr-only"
+        accept={accept}
+        multiple={multiple}
+        disabled={disabled}
+        onChange={(e) => {
+          if (e.target.files?.length) onFiles([...e.target.files]);
+          e.target.value = "";
+        }}
+      />
+      <Upload size={20} aria-hidden />
+      <strong>{label}</strong>
+      {hint && <span className="muted small">{hint}</span>}
+    </label>
+  );
+}
+
 export function Kbd({ children }: { children: ReactNode }) {
   return <kbd className="kbd">{children}</kbd>;
 }
@@ -393,13 +425,13 @@ export function ActionButton({ onRun, children, className = "btn", disabled, tit
 
 // ---------- toasts ----------
 
-type Toast = { id: number; text: string; kind: "info" | "error" };
-const ToastCtx = createContext<(text: string, kind?: "info" | "error") => void>(() => {});
+type Toast = { id: number; text: ReactNode; kind: "info" | "error" };
+const ToastCtx = createContext<(text: ReactNode, kind?: "info" | "error") => void>(() => {});
 export const useToast = () => useContext(ToastCtx);
 
 export function Providers({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const push = useCallback((text: string, kind: "info" | "error" = "info") => {
+  const push = useCallback((text: ReactNode, kind: "info" | "error" = "info") => {
     const id = Date.now() + Math.random();
     setToasts((t) => [...t, { id, text, kind }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "error" ? 9000 : 4500);

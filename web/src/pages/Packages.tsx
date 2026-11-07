@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { BadgeCheck, Boxes, ExternalLink, Hourglass, Link2, RefreshCw, Route, ShieldAlert, ShieldCheck, ShieldQuestion, TerminalSquare } from "lucide-react";
+import { BadgeCheck, Boxes, ExternalLink, Hourglass, Link2, RefreshCw, Route, Send, ShieldAlert, ShieldCheck, ShieldQuestion, TerminalSquare } from "lucide-react";
 import type { ColDef } from "ag-grid-community";
 import { api, useApi } from "../api.ts";
-import { moneyStr, plural } from "../format.ts";
+import { ago, moneyStr, plural } from "../format.ts";
+import { InviteModal } from "../invite.tsx";
+import { useMoneyRefresh } from "../money/stream.tsx";
 import { useOverview } from "../overview.tsx";
 import { TrailDrawer } from "../trail.tsx";
 import { useBrand } from "../brand.tsx";
@@ -33,12 +35,14 @@ function hostOf(u: string): string {
 }
 
 export function Packages() {
-  const { data, error, loading, reload } = useApi<any[]>("/api/packages");
+  const { data, error, loading, reload, refresh } = useApi<any[]>("/api/packages");
+  useMoneyRefresh((e) => e.type === "payout_status" || e.type === "earmark", refresh);
   const toast = useToast();
   const copy = useCopy();
   const { data: ov } = useOverview();
   const brand = useBrand();
   const [trail, setTrail] = useState<string | null>(null);
+  const [inviting, setInviting] = useState<string | null>(null);
   const base = ov?.public_base_url ?? window.location.origin;
   const cols: ColDef<any>[] = [
     {
@@ -106,21 +110,27 @@ export function Packages() {
     {
       headerName: "",
       colId: "actions",
-      minWidth: 200,
-      maxWidth: 220,
+      pinned: "right",
+      minWidth: 210,
+      maxWidth: 230,
       sortable: false,
       filter: false,
       cellRenderer: (p: any) =>
         p.data.repo ? (
           <span className="row" style={{ gap: 4, height: "100%" }}>
             <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); setTrail(p.data.repo); }}><Route size={13} />Trail</button>
-            {!p.data.claim && (
+            {!p.data.claim && Number(p.data.reserved) > 0 && (
+              <button className="btn ghost sm" title="Tell the maintainer money is waiting" onClick={(e) => { e.stopPropagation(); setInviting(p.data.repo); }}>
+                <Send size={13} />{p.data.invited_at ? `Invited ${ago(p.data.invited_at)}` : "Invite"}
+              </button>
+            )}
+            {!p.data.claim && Number(p.data.reserved) === 0 && (
               <button
                 className="btn ghost sm"
                 title="Copy a claim link to send the maintainer"
                 onClick={(e) => { e.stopPropagation(); void copy(`${base}/claim?repo=${p.data.repo.replace("github.com/", "")}`, "Claim link copied. Send it to the maintainer."); }}
               >
-                <Link2 size={13} />Invite
+                <Link2 size={13} />Claim link
               </button>
             )}
           </span>
@@ -186,6 +196,7 @@ export function Packages() {
         )}
       </Card>
       {trail && <TrailDrawer repo={trail} onClose={() => setTrail(null)} />}
+      {inviting && <InviteModal repo={inviting} onClose={() => setInviting(null)} onSent={() => void refresh()} />}
     </div>
   );
 }

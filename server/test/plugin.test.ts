@@ -36,4 +36,5 @@ test("each skill has a description, and the money skill can't be invoked by the 
     assert.match(md, /^---\n[\s\S]*?description: .+[\s\S]*?\n---\n/, dir);
   }
   assert.match(fs.readFileSync(path.join(root, "skills", "fund", "SKILL.md"), "utf8"), /disable-model-invocation: true/);
+  assert.match(fs.readFileSync(path.join(root, "skills", "statement", "SKILL.md"), "utf8"), /disable-model-invocation: true/);
 });

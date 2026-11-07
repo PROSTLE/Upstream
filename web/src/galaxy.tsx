@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useResolvedTheme } from "./theme.ts";
 
 // A slowly turning spiral of stars that drift away from the cursor and settle back. One canvas, no dependencies.
 // It draws a single still frame for people who ask for reduced motion, and stops while the tab is hidden.
@@ -6,14 +7,29 @@ import { useEffect, useRef } from "react";
 type Star = { radius: number; angle: number; depth: number; size: number; color: string; phase: number; bright: boolean; x: number; y: number; vx: number; vy: number };
 type Glow = { x: number; y: number; radius: number; color: string; drift: number };
 
-const COLORS = ["#dfe7f5", "#a9c1ea", "#8fb0e6", "#c8d6ee"];
-const DUST = ["#e8a15c", "#d98a45"];
+const SKY = {
+  dark: {
+    stars: ["#dfe7f5", "#a9c1ea", "#8fb0e6", "#c8d6ee"],
+    dust: ["#e8a15c", "#d98a45"],
+    glow: "rgba(160,190,235,0.028)",
+    core: ["rgba(205,220,255,0.3)", "rgba(130,160,235,0.1)", "rgba(90,120,210,0)"],
+    strength: 1,
+  },
+  // White stars vanish on a pale page, so here they're the logo's blue and teal, and softer, so they never compete with the text.
+  light: {
+    stars: ["#2f5bea", "#5b7ff0", "#11a39c", "#7d93d8"],
+    dust: ["#d98a45", "#c27803"],
+    glow: "rgba(47,91,234,0.035)",
+    core: ["rgba(47,91,234,0.14)", "rgba(17,163,156,0.06)", "rgba(47,91,234,0)"],
+    strength: 0.6,
+  },
+};
 const ARMS = 3;
 const PUSH_RADIUS = 170;
 
 const gaussian = () => (Math.random() + Math.random() + Math.random() - 1.5) / 1.5;
 
-function makeStars(count: number, reach: number): Star[] {
+function makeStars(count: number, reach: number, sky: (typeof SKY)["dark"]): Star[] {
   return Array.from({ length: count }, (_, i) => {
     const depth = Math.pow(Math.random(), 1.25);
     const dust = Math.random() < 0.16 && depth > 0.18 && depth < 0.6;
@@ -23,7 +39,7 @@ function makeStars(count: number, reach: number): Star[] {
       angle: arm + depth * 5.2 + gaussian() * (0.42 - depth * 0.14),
       depth,
       size: Math.random() < 0.06 ? 2.4 : Math.random() < 0.35 ? 1.7 : 1.2,
-      color: dust ? DUST[i % DUST.length] : COLORS[i % COLORS.length],
+      color: dust ? sky.dust[i % sky.dust.length] : sky.stars[i % sky.stars.length],
       phase: Math.random() * Math.PI * 2,
       bright: Math.random() < 0.05,
       x: 0,
@@ -36,11 +52,13 @@ function makeStars(count: number, reach: number): Star[] {
 
 export function Galaxy() {
   const ref = useRef<HTMLCanvasElement>(null);
+  const theme = useResolvedTheme();
 
   useEffect(() => {
     const canvas = ref.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
+    const sky = SKY[theme];
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     let width = 0, height = 0, centerX = 0, centerY = 0;
     let stars: Star[] = [];
@@ -62,18 +80,18 @@ export function Galaxy() {
       centerX = narrow ? width * 0.5 : width * 0.66;
       centerY = narrow ? height * 0.34 : height * 0.46;
       const reach = narrow ? width * 0.95 : width * 0.46;
-      stars = makeStars(Math.min(2600, Math.floor((width * height) / 480)), reach);
+      stars = makeStars(Math.min(2600, Math.floor((width * height) / 480)), reach, sky);
       glows = Array.from({ length: narrow ? 3 : 6 }, () => ({
         x: Math.random() * width,
         y: Math.random() * height,
         radius: 8 + Math.random() * 14,
-        color: "rgba(160,190,235,0.028)",
+        color: sky.glow,
         drift: 0.004 + Math.random() * 0.008,
       }));
       core = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, reach * 0.42);
-      core.addColorStop(0, "rgba(205,220,255,0.3)");
-      core.addColorStop(0.28, "rgba(130,160,235,0.1)");
-      core.addColorStop(1, "rgba(90,120,210,0)");
+      core.addColorStop(0, sky.core[0]);
+      core.addColorStop(0.28, sky.core[1]);
+      core.addColorStop(1, sky.core[2]);
     };
 
     const draw = (time: number) => {
@@ -128,11 +146,11 @@ export function Galaxy() {
         if (x < -4 || y < -4 || x > width + 4 || y > height + 4) continue;
         const twinkle = 0.72 + 0.28 * Math.sin(time * 0.0012 + s.phase);
         const fade = 1 - s.depth * 0.5;
-        ctx.globalAlpha = Math.max(0.3, fade * twinkle);
+        ctx.globalAlpha = Math.max(0.3, fade * twinkle) * sky.strength;
         ctx.fillStyle = s.color;
         ctx.fillRect(x, y, s.size, s.size);
         if (s.bright) {
-          ctx.globalAlpha = 0.22 * twinkle;
+          ctx.globalAlpha = 0.22 * twinkle * sky.strength;
           ctx.beginPath();
           ctx.arc(x + s.size / 2, y + s.size / 2, 3.8, 0, Math.PI * 2);
           ctx.fill();
@@ -183,7 +201,7 @@ export function Galaxy() {
       window.removeEventListener("pointermove", onMove);
       document.documentElement.removeEventListener("pointerleave", onLeave);
     };
-  }, []);
+  }, [theme]);
 
   return <canvas ref={ref} className="galaxy" aria-hidden="true" />;
 }

@@ -1,11 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { ArrowLeftRight, Download, History, PieChart, Search } from "lucide-react";
 import type { ColDef } from "ag-grid-community";
 import { useApi } from "../api.ts";
 import { dateTime, money, moneyStr } from "../format.ts";
+import { MoneyFlow } from "../money/MoneyFlow.tsx";
+import { useMoneyRefresh } from "../money/stream.tsx";
 import { Card, Empty, ErrorBox, Loading, PageHead } from "../ui.tsx";
 import { Chart, Grid, useNeutralFill, usePalette } from "../data.tsx";
-import { FlowDiagram } from "./Overview.tsx";
 import { useBrand } from "../brand.tsx";
 
 /** A readable name for each ledger line, from its kind, sign and what it refers to. */
@@ -46,11 +48,15 @@ function toCsv(rows: any[]): string {
 }
 
 export function Ledger() {
-  const { data, error, loading } = useApi<any>("/api/ledger", [], { poll: 30000 });
+  const { data, error, loading, refresh } = useApi<any>("/api/ledger", [], { poll: 30000 });
+  useMoneyRefresh(() => true, refresh);
   const pal = usePalette();
   const brand = useBrand();
   const neutral = useNeutralFill();
-  const [group, setGroup] = useState<(typeof GROUPS)[number]["v"]>("all");
+  const [params] = useSearchParams();
+  const wanted = GROUPS.find((g) => g.v === params.get("group"))?.v ?? "all";
+  const [group, setGroup] = useState<(typeof GROUPS)[number]["v"]>(wanted);
+  useEffect(() => setGroup(wanted), [wanted]);
   const [q, setQ] = useState("");
   const rows = useMemo(() => {
     const g = GROUPS.find((x) => x.v === group)!;
@@ -104,24 +110,9 @@ export function Ledger() {
   return (
     <div className="page">
       <PageHead eyebrow="Step 5" title="Money records" subtitle="Every money movement PayPal has confirmed: payments in, fees, payouts and refunds." />
-      <div className="split">
-        <Card title="Flow of funds" icon={<ArrowLeftRight size={17} />}>
-          {p.fundingGross === 0 ? <Empty icon={<ArrowLeftRight size={22} />} title="No money has moved yet">Entries appear when PayPal confirms the first subscription payment or top-up.</Empty> : <FlowDiagram pool={p} />}
-        </Card>
-        <Card title="Breakdown" icon={<PieChart size={17} />} tone="violet">
-          {donut.length === 0 ? <Empty icon={<PieChart size={22} />} title="Nothing to chart yet" /> : (
-            <Chart
-              height={280}
-              options={{
-                data: donut,
-                series: [{ type: "donut", angleKey: "v", legendItemKey: "k", fills: donut.map((d) => d.fill), strokes: donut.map((d) => d.fill), innerRadiusRatio: 0.68, calloutLabelKey: "label", calloutLabel: { enabled: false }, tooltip: { renderer: ({ datum }: any) => ({ title: datum.k, content: datum.label }) } }],
-                legend: { position: "bottom" },
-              } as any}
-            />
-          )}
-        </Card>
-      </div>
+      <div className="card card-pad"><MoneyFlow variant="full" /></div>
       <Card
+        id="ledger-entries"
         title="Entries"
         sub={`${rows.length} shown · net ${money(shownTotal, cur)}`}
         icon={<ArrowLeftRight size={17} />}
@@ -141,9 +132,23 @@ export function Ledger() {
         </div>
         <Grid rows={rows} columns={cols} height={420} getRowId={(r) => String(r.id)} empty="No entries match this filter" />
       </Card>
-      <Card title="PayPal API audit log" sub={`Every call ${brand} made, with PayPal-Request-Id and PayPal-Debug-Id`} icon={<History size={17} />}>
-        <Grid rows={data.paypal_calls} columns={callCols} height={380} getRowId={(r) => String(r.id)} empty="No PayPal calls yet" />
-      </Card>
+      <div className="split">
+        <Card title="PayPal API audit log" sub={`Every call ${brand} made, with PayPal-Request-Id and PayPal-Debug-Id`} icon={<History size={17} />}>
+          <Grid rows={data.paypal_calls} columns={callCols} height={380} getRowId={(r) => String(r.id)} empty="No PayPal calls yet" />
+        </Card>
+        <Card title="Breakdown" icon={<PieChart size={17} />} tone="violet">
+          {donut.length === 0 ? <Empty icon={<PieChart size={22} />} title="Nothing to chart yet" /> : (
+            <Chart
+              height={360}
+              options={{
+                data: donut,
+                series: [{ type: "donut", angleKey: "v", legendItemKey: "k", fills: donut.map((d) => d.fill), strokes: donut.map((d) => d.fill), innerRadiusRatio: 0.68, calloutLabelKey: "label", calloutLabel: { enabled: false }, tooltip: { renderer: ({ datum }: any) => ({ title: datum.k, content: datum.label }) } }],
+                legend: { position: "bottom" },
+              } as any}
+            />
+          )}
+        </Card>
+      </div>
     </div>
   );
 }

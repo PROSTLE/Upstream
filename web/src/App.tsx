@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { getAdminToken, setAdminToken } from "./api.ts";
 import { plural } from "./format.ts";
+import { MoneyStreamProvider } from "./money/stream.tsx";
 import { OverviewProvider, useOverview } from "./overview.tsx";
 import { CommandPalette, type NavItem } from "./palette.tsx";
 import { useThemePref, type ThemePref } from "./theme.ts";
@@ -29,6 +30,8 @@ const PublicClaim = lazy(() => import("./pages/Claim.tsx").then((m) => ({ defaul
 const Audit = lazy(() => import("./pages/Audit.tsx").then((m) => ({ default: m.Audit })));
 const Policy = lazy(() => import("./pages/Policy.tsx").then((m) => ({ default: m.Policy })));
 const RepoPage = lazy(() => import("./pages/Repo.tsx").then((m) => ({ default: m.RepoPage })));
+const CheckStart = lazy(() => import("./pages/Check.tsx").then((m) => ({ default: m.CheckStart })));
+const CheckResult = lazy(() => import("./pages/Check.tsx").then((m) => ({ default: m.CheckResult })));
 
 // The money flow, in order: fund → collect evidence → verify maintainers → pay → reconcile.
 const FLOW: (NavItem & { step: number })[] = [
@@ -55,7 +58,7 @@ function titleFor(path: string): string {
 
 export function App() {
   const loc = useLocation();
-  const isPublic = loc.pathname === "/" || loc.pathname.startsWith("/claim") || loc.pathname.startsWith("/c/") || loc.pathname.startsWith("/r/");
+  const isPublic = loc.pathname === "/" || loc.pathname.startsWith("/claim") || loc.pathname.startsWith("/c/") || loc.pathname.startsWith("/r/") || loc.pathname === "/check" || loc.pathname.startsWith("/check/");
   if (isPublic) {
     return (
       <Suspense fallback={<div className="public-wrap"><div className="public-card"><Loading rows={1} /></div></div>}>
@@ -65,6 +68,8 @@ export function App() {
         <Route path="/claim/complete" element={<ClaimComplete />} />
         <Route path="/c/:token" element={<PublicClaim />} />
         <Route path="/r/:owner/:name" element={<RepoPage />} />
+        <Route path="/check" element={<CheckStart />} />
+        <Route path="/check/:id" element={<CheckResult />} />
       </Routes>
       </Suspense>
     );
@@ -96,7 +101,9 @@ function Gate() {
   if (h.access === "private" && !canEnter) return <Navigate to="/" replace />;
   return (
     <OverviewProvider>
-      <Shell />
+      <MoneyStreamProvider>
+        <Shell />
+      </MoneyStreamProvider>
     </OverviewProvider>
   );
 }

@@ -51,6 +51,10 @@ const schema = z.object({
   POLICY_MIN_PAYOUT: decimalString,
   POLICY_MAX_PAYOUT: decimalString,
   POLICY_PAYOUT_FEE_RESERVE: fraction,
+  // PayPal's fee may take at most this share of a payout, so smaller amounts wait for their maintainer.
+  POLICY_MAX_FEE_SHARE: fraction.default(0.05),
+  // What one payout item is assumed to cost until PayPal has reported a real fee in this currency.
+  POLICY_PAYOUT_FEE_ESTIMATE: decimalString.default("0.25"),
   POLICY_RESERVE_DAYS: z.coerce.number().int().positive(),
   POLICY_CANCEL_UNCLAIMED_AFTER_DAYS: z.coerce.number().int().positive(),
   // Optional. Unset POLICY_MAX_TOPUP: Upstream adds no cap of its own to one-time top-ups (PayPal's limits still apply).
@@ -61,6 +65,10 @@ const schema = z.object({
   MODEL_API_KEY: optional,
   // The server pays for AI reviews, so each person other than the operator gets this many per 24 hours.
   POLICY_MAX_REVIEWS_PER_DAY: z.coerce.number().int().positive().default(20),
+  // The public /check page. Over either limit it still runs the deterministic methods and says the AI review is paused.
+  PUBLIC_CHECK_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
+  PUBLIC_CHECK_MAX_PER_DAY: z.coerce.number().int().nonnegative().default(100),
+  PUBLIC_CHECK_MAX_PER_IP_PER_HOUR: z.coerce.number().int().nonnegative().default(5),
   MODEL_API_BASE: z.string().url(),
   UPSTREAM_MODEL: z.string().min(1),
   UPSTREAM_EFFORT: z.enum(["low", "medium", "high", "xhigh"]),
@@ -79,7 +87,8 @@ const schema = z.object({
   METADATA_CACHE_HOURS: z.coerce.number().positive(),
 });
 
-const parsed = schema.safeParse(process.env);
+// Render tells a service its own address, so PUBLIC_BASE_URL only needs setting there for a custom domain.
+const parsed = schema.safeParse({ ...process.env, PUBLIC_BASE_URL: process.env.PUBLIC_BASE_URL?.trim() || process.env.RENDER_EXTERNAL_URL });
 if (!parsed.success) {
   const lines = parsed.error.issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`);
   console.error(

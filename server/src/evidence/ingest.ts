@@ -17,6 +17,9 @@ export interface IngestPayload extends HookPayload {
   };
 }
 
+/** The last folder name, whichever machine's path style the session came from: an imported session can come from Windows on a Linux server. */
+const projectName = (cwd: string) => path.basename(cwd.replace(/\\/g, "/"));
+
 export interface ManifestState {
   initial?: ManifestDeps & { captured_at: string };
   latest?: ManifestDeps & { captured_at: string };
@@ -66,10 +69,13 @@ function reusedLogic(sessionId: string, p: IngestPayload, drafts: EvidenceDraft[
   }));
 }
 
+/** A session or event id as stored for this person. */
+export const scopedId = (userId: string, id: string) => (userId === LOCAL_USER ? id : `${userId}.${id}`);
+
 export function ingest(p: IngestPayload, userId: string = LOCAL_USER): { stored: boolean; evidence: number } {
   if (!p.session_id || !p.hook_event_name) throw new Error("session_id and hook_event_name are required");
   const at = p.upstream?.sent_at ?? now();
-  const scoped = (id: string) => (userId === LOCAL_USER ? id : `${userId}.${id}`);
+  const scoped = (id: string) => scopedId(userId, id);
   const sessionId = scoped(p.session_id);
   const dedupeKey = scoped(
     p.tool_use_id ??
@@ -81,11 +87,12 @@ export function ingest(p: IngestPayload, userId: string = LOCAL_USER): { stored:
   return tx(() => {
     const d = db();
     d.prepare(
-      `INSERT INTO sessions(id, cwd, project, transcript_path, started_at, last_event_at, user_id)
-       VALUES (?,?,?,?,?,?,?)
+      `INSERT INTO sessions(id, cwd, project, transcript_path, started_at, last_event_at, user_id, source)
+       VALUES (?,?,?,?,?,?,?,?)
        ON CONFLICT(id) DO UPDATE SET last_event_at = MAX(sessions.last_event_at, excluded.last_event_at),
-         cwd = COALESCE(sessions.cwd, excluded.cwd), transcript_path = COALESCE(excluded.transcript_path, sessions.transcript_path)`,
-    ).run(sessionId, p.cwd ?? null, p.cwd ? path.basename(p.cwd) : null, p.transcript_path ?? null, at, at, userId);
+         started_at = MIN(sessions.started_at, excluded.started_at),
+         cwd = COALESCE(sessions.cwd, excluded.cwd), project = COALESCE(sessions.project, excluded.project), transcript_path = COALESCE(excluded.transcript_path, sessions.transcript_path)`,
+    ).run(sessionId, p.cwd ?? null, p.cwd ? projectName(p.cwd) : null, p.transcript_path ?? null, at, at, userId, p.source === "transcript" ? "transcript" : "hook");
 
     const res = d
       .prepare(

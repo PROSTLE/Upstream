@@ -5,7 +5,8 @@ services:
     name: upstream
     runtime: node
     plan: 0.5c-512mb
-    buildCommand: npm ci && npm run build
+    # --include=dev because Vite is a dev package: the build must still work if NODE_ENV=production is ever set here.
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
     disk:
@@ -17,9 +18,7 @@ services:
         value: "24"
       - key: DATABASE_PATH
         value: /var/data/upstream.db
-      # Set to this service's https URL after the first deploy (PayPal webhooks and OAuth redirects use it).
-      - key: PUBLIC_BASE_URL
-        sync: false
+      # PUBLIC_BASE_URL isn't listed: the server uses Render's RENDER_EXTERNAL_URL. Set it only for a custom domain.
       - key: ADMIN_TOKEN
         generateValue: true
       - key: INGEST_TOKEN
@@ -45,6 +44,12 @@ services:
         sync: false
       - key: POLICY_MAX_REVIEWS_PER_DAY
         value: "20"
+      - key: PUBLIC_CHECK_ENABLED
+        value: "true"
+      - key: PUBLIC_CHECK_MAX_PER_DAY
+        value: "100"
+      - key: PUBLIC_CHECK_MAX_PER_IP_PER_HOUR
+        value: "5"
       - key: MODEL_API_BASE
         value: https://api.meta.ai
       - key: UPSTREAM_MODEL
@@ -69,6 +74,10 @@ services:
         value: "1.00"
       - key: POLICY_MAX_PAYOUT
         value: "250.00"
+      - key: POLICY_MAX_FEE_SHARE
+        value: "0.05"
+      - key: POLICY_PAYOUT_FEE_ESTIMATE
+        value: "0.25"
       - key: POLICY_PAYOUT_FEE_RESERVE
         value: "0.02"
       - key: POLICY_RESERVE_DAYS

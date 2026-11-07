@@ -178,6 +178,24 @@ server.registerTool(
 );
 
 server.registerTool(
+  "upstream_issue_statement",
+  {
+    title: "Issue a monthly funding statement",
+    description:
+      "Issues a month's funding statement as a PayPal invoice marked paid, listing each payment PayPal confirmed and where the money went. It moves no money and emails nobody. Issuing the same month again returns the same invoice. Only call this when the user asks for a statement.",
+    inputSchema: { month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).describe("The month, for example 2026-11.") },
+  },
+  async ({ month }) => {
+    try {
+      const r = (await call("POST", `/api/statements/${month}/issue`, true)) as any;
+      return text({ month: r.month, invoice_id: r.invoice_id, status: r.status, view_url: r.view_url, payments_recorded_by_note_only: r.fell_back });
+    } catch (e) {
+      return fail(e);
+    }
+  },
+);
+
+server.registerTool(
   "upstream_request_funding",
   {
     title: "Ask the user to top up the open-source pool",

@@ -1,5 +1,6 @@
 import { db, now } from "../db.ts";
 import { subscriptionOwner, syncKnownSubscriptions, syncSubscription, upsertSubscription } from "../funding.ts";
+import { moneyContext } from "../money/flow.ts";
 import { applyPayoutItem, syncSettlement } from "../settlement.ts";
 import { topupFromWebhook } from "../topups.ts";
 import type { PayoutItem } from "./payouts.ts";
@@ -31,7 +32,8 @@ export async function receiveWebhook(headers: Record<string, string | string[] |
   if (verification !== "SUCCESS") return { verified: false, verification };
 
   try {
-    await processEvent(event);
+    // Only reached for a verified event, so every money event this causes can say so.
+    await moneyContext.run({ via: "webhook", event_id: event.id, event_type: event.event_type, verified: true }, () => processEvent(event));
     db().prepare("UPDATE webhook_events SET processed_at = ?, process_error = NULL WHERE id = ?").run(now(), event.id);
   } catch (err) {
     db().prepare("UPDATE webhook_events SET process_error = ? WHERE id = ?").run(String(err), event.id);

@@ -3,13 +3,16 @@ import { db, json, newId, now, tx } from "../db.ts";
 import { buildCandidates, type CandidateSet } from "../evidence/candidates.ts";
 import { baselineProposal } from "./baseline.ts";
 import { llmProposal } from "./llm.ts";
+import { manifestComparison } from "./manifest.ts";
 import { validate, type Flag, type Validated } from "./validate.ts";
+
+export type RunMethod = "llm" | "baseline" | "manifest";
 
 export interface RunRecord {
   id: string;
   session_id: string;
   created_at: string;
-  method: "llm" | "baseline";
+  method: RunMethod;
   model: string | null;
   candidates: CandidateSet;
   raw_output: unknown;
@@ -21,7 +24,7 @@ export interface RunRecord {
 
 function store(
   sessionId: string,
-  method: "llm" | "baseline",
+  method: RunMethod,
   set: CandidateSet,
   validated: Validated,
   extra: { model?: string; raw?: unknown; usage?: unknown },
@@ -64,17 +67,25 @@ export function divergence(a: Validated, b: Validated): number {
   return d / 2;
 }
 
-export async function attributeSession(sessionId: string): Promise<{ llmRunId?: string; baselineRunId: string; llmError?: string }> {
+/** `llm: false` runs the deterministic methods only. `maxResolve` bounds the registry lookups when the session comes from the public check page. */
+export async function attributeSession(
+  sessionId: string,
+  options: { llm?: boolean; maxResolve?: number } = {},
+): Promise<{ llmRunId?: string; baselineRunId: string; manifestRunId?: string; llmError?: string }> {
   const session = db().prepare("SELECT allocated_settlement_id FROM sessions WHERE id = ?").get(sessionId) as
     | { allocated_settlement_id: string | null }
     | undefined;
   if (!session) throw new Error(`Unknown session ${sessionId}`);
   if (session.allocated_settlement_id) throw new Error("This session is already part of a settlement.");
 
-  const set = await buildCandidates(sessionId);
+  const set = await buildCandidates(sessionId, { maxResolve: options.maxResolve });
   const opts = { maxShare: config.POLICY_MAX_PACKAGE_SHARE };
   const base = validate(set, baselineProposal(set), opts);
   const baselineRunId = store(sessionId, "baseline", set, base, {});
+  // Stored here and never at import time: a run existing before labels are saved would make those labels not blind.
+  const declared = manifestComparison(set);
+  const manifestRunId = declared ? store(sessionId, "manifest", set, declared, {}) : undefined;
+  if (options.llm === false) return { baselineRunId, manifestRunId };
 
   try {
     const llm = await llmProposal(set);
@@ -90,9 +101,9 @@ export async function attributeSession(sessionId: string): Promise<{ llmRunId?: 
     for (const c of llm.raw.concerns) v.flags.push({ level: "warn", code: "MODEL_CONCERN", message: c });
     const llmRunId = store(sessionId, "llm", set, v, { model: llm.model, raw: llm.raw, usage: llm.usage });
     setActiveRun(sessionId, llmRunId);
-    return { llmRunId, baselineRunId };
+    return { llmRunId, baselineRunId, manifestRunId };
   } catch (err) {
-    return { baselineRunId, llmError: err instanceof Error ? err.message : String(err) };
+    return { baselineRunId, manifestRunId, llmError: err instanceof Error ? err.message : String(err) };
   }
 }
 

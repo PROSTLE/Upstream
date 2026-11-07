@@ -61,7 +61,10 @@ export function Grid<T>({ rows, columns, height = 420, onRowClick, getRowId, emp
         animateRows
         suppressCellFocus
         getRowId={getRowId ? (p) => getRowId(p.data) : undefined}
-        onRowClicked={onRowClick ? (e) => e.data && onRowClick(e.data) : undefined}
+        // The grid hears a click before React does, so a button's stopPropagation is too late: buttons and links inside a row are ruled out here.
+        onRowClicked={onRowClick ? (e) => {
+          if (e.data && !(e.event?.target instanceof Element && e.event.target.closest("a, button"))) onRowClick(e.data);
+        } : undefined}
         rowStyle={onRowClick ? { cursor: "pointer" } : undefined}
         overlayNoRowsTemplate={`<span style="opacity:.7">${empty}</span>`}
       />

@@ -6,16 +6,16 @@ import { dateTime, moneyStr, plural } from "../format.ts";
 import { ActionButton, BrandIcon, Card, CodeBlock, ErrorBox, Logo, Skeleton, Status, Stepper } from "../ui.tsx";
 import { useBrand, useHealth } from "../brand.tsx";
 
-export function PublicShell({ children, wide }: { children: ReactNode; wide?: boolean }) {
+export function PublicShell({ children, wide, to = "/claim", tagline = "Get paid when AI coding agents rely on your work" }: { children: ReactNode; wide?: boolean; to?: string; tagline?: string }) {
   const brand = useBrand();
   return (
     <div className="public-wrap">
       <div className={`public-card${wide ? " wide" : ""}`}>
-        <Link to="/claim" className="hero-mark">
+        <Link to={to} className="hero-mark">
           <Logo size={36} />
           <div>
             <div className="brand-name" style={{ fontSize: 20 }}>{brand || <Skeleton h={20} w={100} />}</div>
-            <div className="brand-sub">Get paid when AI coding agents rely on your work</div>
+            <div className="brand-sub">{tagline}</div>
           </div>
         </Link>
         {children}

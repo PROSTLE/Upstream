@@ -7,13 +7,15 @@ import { ingestTokenFor, rotateIngestToken, userById, userIdForIngestToken } fro
 import { config, features, repoRoot } from "./config.ts";
 import { db, getSetting, initDb, json, LOCAL_USER, now } from "./db.ts";
 import { ingest, type IngestPayload } from "./evidence/ingest.ts";
+import { cleanTranscriptEvents, importTranscript } from "./evidence/import.ts";
 import { buildCandidates } from "./evidence/candidates.ts";
 import { activeRun, attributeSession, runsForSession, setActiveRun } from "./attribution/run.ts";
 import { evalReport, LABELS, labelsAreBlind, saveLabels } from "./attribution/eval.ts";
 import { getPackage, normalizeRepo, resolveMany } from "./resolve/index.ts";
-import { badgeSvg, moneyTrail, packagesForUser, publicActivity, repoSummary, reposWithMoney } from "./public.ts";
+import { badgeSvg, inviteDetails, moneyTrail, packagesForUser, publicActivity, recordInvite, repoSummary, reposWithMoney } from "./public.ts";
 import { sessionCredits } from "./credits.ts";
 import { auditReport } from "./audit.ts";
+import { checkView, cleanupExpiredChecks, failInterruptedChecks, hashIp, isOverHardLimit, startCheck } from "./check.ts";
 import { agentAllowance, captureTopup, listTopups, startTopup, syncTopup } from "./topups.ts";
 import type { Ecosystem } from "./evidence/parse.ts";
 import {
@@ -34,6 +36,7 @@ import { currentSubscription, startSubscription, syncSubscription } from "./fund
 import { ledgerEntries, poolSummary } from "./ledger.ts";
 import { PayPalError, PayPalNotConfigured, runAsUser } from "./paypal/client.ts";
 import { ensureProductAndPlan, activePlanId } from "./paypal/subscriptions.ts";
+import { issueStatement, listStatements } from "./paypal/statements.ts";
 import { ensureWebhook, webhookId, webhookUrl } from "./paypal/webhooks.ts";
 import { receiveWebhook } from "./paypal/events.ts";
 import {
@@ -41,16 +44,23 @@ import {
   cancelUnclaimed,
   discardDrafts,
   executeSettlement,
+  feeEstimate,
   housekeeping,
+  payoutThreshold,
   planSettlement,
   replaySettlement,
   syncSettlement,
 } from "./settlement.ts";
 import { fromMinor } from "./money.ts";
+import { backfillMoneyEvents, flowSummary, latestSettlementId, moneyEventsAfter, moneyEventsBetween, subscribe } from "./money/flow.ts";
 
 initDb(config.DATABASE_PATH);
+failInterruptedChecks();
+backfillMoneyEvents();
 const app = express();
 app.disable("x-powered-by");
+// One proxy in front (Render or a tunnel), so req.ip is the client, which the public check's limits count by.
+app.set("trust proxy", 1);
 
 const safeEqual = (a: string, b: string) => {
   const x = Buffer.from(a);
@@ -121,12 +131,35 @@ const ownSettlement = ownedBy("SELECT user_id FROM settlements WHERE id = ?", "U
 const ownTopup = ownedBy("SELECT user_id FROM topups WHERE id = ?", "Unknown top-up", "id");
 const ownPayoutItem = ownedBy("SELECT s.user_id FROM payout_items p JOIN settlements s ON s.id = p.settlement_id WHERE p.sender_item_id = ?", "Unknown payout item", "senderItemId");
 
+const UPLOAD_LIMIT = "10mb";
+
 // PayPal webhooks need the exact raw body for signature verification.
 app.post("/api/paypal/webhook", express.raw({ type: "*/*", limit: "1mb" }), async (req, res) => {
   const raw = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
   const result = await receiveWebhook(req.headers, raw);
   res.status(200).json(result);
 });
+
+// Session files can be large, so this route has its own limit and runs before the global parser, like the webhook above. Sign-in is checked before the body is read.
+app.post("/api/sessions/import", requireMember, express.json({ limit: UPLOAD_LIMIT }), (req, res) => {
+  const events = cleanTranscriptEvents(req.body?.events);
+  res.json(importTranscript(events, scope(req)));
+});
+
+// The public check page. No sign-in, so an address over its hard limit is turned away before the upload is read.
+app.post(
+  "/api/check",
+  (req, res, next) => {
+    if (!config.PUBLIC_CHECK_ENABLED) return res.status(404).json({ error: "Public checks are turned off on this server." });
+    if (isOverHardLimit(hashIp(req.ip ?? ""))) return res.status(429).json({ error: "Too many checks from this address. Try again in an hour." });
+    next();
+  },
+  express.json({ limit: UPLOAD_LIMIT }),
+  (req, res) => {
+    const { id } = startCheck({ events: req.body?.events, fileName: req.body?.file_name, stats: req.body?.stats, warnings: req.body?.warnings, ipHash: hashIp(req.ip ?? "") });
+    res.json({ id });
+  },
+);
 
 app.use(express.json({ limit: "4mb" }));
 // PayPal calls made while handling a request appear in that person's own call log.
@@ -154,6 +187,7 @@ app.get("/api/overview", memberRead, (req, res) => {
   const userId = scope(req);
   const operator = userId === LOCAL_USER;
   const count = (sql: string) => Number((db().prepare(sql).get(userId) as { n: number }).n);
+  const fee = feeEstimate(currency);
   const pkgs = packagesForUser(userId);
   const repos = new Set(pkgs.map((p) => getPackage(p.ecosystem as Ecosystem, p.name)?.repo).filter((r): r is string => Boolean(r)));
   res.json({
@@ -169,6 +203,12 @@ app.get("/api/overview", memberRead, (req, res) => {
       min_payout: config.POLICY_MIN_PAYOUT,
       max_payout: config.POLICY_MAX_PAYOUT,
       fee_reserve: config.POLICY_PAYOUT_FEE_RESERVE,
+      max_fee_share: config.POLICY_MAX_FEE_SHARE,
+      fee_estimate: fromMinor(fee.minor, currency),
+      fee_estimate_source: fee.source,
+      payout_threshold: fromMinor(payoutThreshold(currency, fee.minor), currency),
+      // The steepest fee on this person's payouts so far, so the "at most" claim can say when an older payout went over it.
+      highest_fee_share: (db().prepare("SELECT MAX(1.0 * p.fee_minor / p.amount_minor) AS m FROM payout_items p JOIN settlements s ON s.id = p.settlement_id WHERE s.user_id = ? AND p.fee_minor > 0").get(userId) as { m: number | null }).m,
       reserve_days: config.POLICY_RESERVE_DAYS,
       cancel_unclaimed_after_days: config.POLICY_CANCEL_UNCLAIMED_AFTER_DAYS,
     },
@@ -195,7 +235,7 @@ app.get("/api/overview", memberRead, (req, res) => {
 });
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, time: now(), brand: config.BRAND_NAME, features, paypal_env: config.PAYPAL_ENV, public_base_url: config.PUBLIC_BASE_URL, dashboard_access: config.DASHBOARD_ACCESS, source_url: config.SOURCE_REPO_URL });
+  res.json({ ok: true, time: now(), brand: config.BRAND_NAME, features, paypal_env: config.PAYPAL_ENV, public_base_url: config.PUBLIC_BASE_URL, dashboard_access: config.DASHBOARD_ACCESS, source_url: config.SOURCE_REPO_URL, public_check: config.PUBLIC_CHECK_ENABLED });
 });
 
 // ---------- Sign in with GitHub ----------
@@ -285,6 +325,7 @@ app.get("/api/sessions", sessionRead, (req, res) => {
         last_event_at: r.last_event_at,
         ended_at: r.ended_at,
         status: r.status,
+        source: r.source,
         allocated_settlement_id: r.allocated_settlement_id,
         evidence_count: r.evidence_count,
         event_count: r.event_count,
@@ -347,6 +388,7 @@ app.post("/api/sessions/:id/active-run", requireMember, ownSession, (req, res) =
   const runId = String(req.body?.run_id ?? "");
   const run = runsForSession(String(req.params.id)).find((r) => r.id === runId);
   if (!run) return res.status(404).json({ error: "Unknown run" });
+  if (run.method === "manifest") return res.status(400).json({ error: "comparison only" });
   const locked = db().prepare("SELECT allocated_settlement_id FROM sessions WHERE id = ?").get(String(req.params.id)) as { allocated_settlement_id: string | null } | undefined;
   if (locked?.allocated_settlement_id) return res.status(409).json({ error: "This session is already part of a payout; the attribution that paid it can't be swapped." });
   setActiveRun(String(req.params.id), runId);
@@ -381,11 +423,13 @@ app.get("/api/packages", memberRead, (req, res) => {
             .all(p.repo, currency, userId) as { status: string; t: number }[])
         : [];
       const s = (k: string) => fromMinor(Number(sums.find((x) => x.status === k)?.t ?? 0), currency);
+      const invited = p.repo ? (db().prepare("SELECT created_at FROM invites WHERE repo = ? AND user_id = ?").get(p.repo, userId) as { created_at: string } | undefined) : undefined;
       return {
         ...p,
         sources: undefined,
         repo_conflict: (p.sources as any)?.repo_conflict ?? null,
         claim: claim ? { id: claim.id, method: claim.method, github_login: claim.github_login, verified_at: claim.verified_at } : null,
+        invited_at: invited?.created_at ?? null,
         reserved: s("reserved"),
         in_flight: s("in_batch"),
         paid: s("paid"),
@@ -484,6 +528,14 @@ app.get("/api/claims/public/:token", (req, res) => {
   res.json({ repo: c.repo, status: c.status, created_at: c.created_at, verified_at: c.verified_at, brand: config.BRAND_NAME });
 });
 
+// ---------- Public check page ----------
+app.get("/api/check/:id", (req, res) => {
+  const view = checkView(String(req.params.id));
+  if (!view) return res.status(404).json({ error: "This check doesn't exist, or its 24 hours are up." });
+  res.setHeader("Cache-Control", "no-store");
+  res.json(view);
+});
+
 // ---------- Public maintainer views (read-only) ----------
 const repoParam = (req: Request) => normalizeRepo(`https://github.com/${String(req.params.owner)}/${String(req.params.name).replace(/\.svg$/, "")}`);
 
@@ -511,6 +563,22 @@ app.get("/api/trail", memberRead, (req, res) => {
   res.json(moneyTrail(repo, scope(req)));
 });
 
+// What the person's invitation to a maintainer says. It's posted only if they open GitHub's form and press submit themselves.
+app.get("/api/invite/:owner/:name", requireMember, (req, res) => {
+  const repo = repoParam(req);
+  if (!repo) return res.status(400).json({ error: "Not a GitHub repository." });
+  const details = inviteDetails(repo, scope(req));
+  if ("error" in details) return res.status(404).json(details);
+  res.json(details);
+});
+
+app.post("/api/invite/:owner/:name/sent", requireMember, (req, res) => {
+  const repo = repoParam(req);
+  if (!repo) return res.status(400).json({ error: "Not a GitHub repository." });
+  recordInvite(repo, scope(req), req.body?.channel);
+  res.json({ ok: true });
+});
+
 // ---------- Funding (PayPal Subscriptions) ----------
 app.get("/api/funding", memberRead, (req, res) => {
   const userId = scope(req);
@@ -527,6 +595,13 @@ app.get("/api/funding", memberRead, (req, res) => {
       agent: allowance && { ...allowance, cap: fromMinor(allowance.cap_minor, config.TITHE_CURRENCY), left: fromMinor(allowance.left_minor, config.TITHE_CURRENCY) },
     },
   });
+});
+
+// ---------- Monthly statements (PayPal Agent Toolkit) ----------
+app.get("/api/statements", memberRead, (req, res) => res.json(listStatements(scope(req))));
+
+app.post("/api/statements/:month/issue", requireMember, requireTestModeUnlessOperator, async (req, res) => {
+  res.json(await issueStatement(scope(req), String(req.params.month), { email: req.body?.email }));
 });
 
 // ---------- One-time top-ups (PayPal Orders v2) ----------
@@ -657,9 +732,46 @@ app.get("/api/ledger", memberRead, (req, res) => {
   });
 });
 
+// ---------- Live money events ----------
+const sseEvent = (e: { id: number }) => `id: ${e.id}\nevent: money\ndata: ${JSON.stringify(e)}\n\n`;
+
+// A stream of this person's money events. The backlog comes first, then "hello" with the current numbers, then events as they commit.
+app.get("/api/money/stream", memberRead, (req, res) => {
+  const userId = scope(req);
+  res.status(200).set({ "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+  res.flushHeaders();
+  res.write("retry: 3000\n\n");
+  const after = Math.max(Number(req.header("last-event-id") ?? req.query.after ?? 0) || 0, 0);
+  const { events, more } = moneyEventsAfter(userId, after, 500);
+  for (const e of events) res.write(sseEvent(e));
+  const lastSent = events.at(-1)?.id ?? after;
+  res.write(`event: hello\ndata: ${JSON.stringify({ summary: flowSummary(userId), last_id: lastSent, more, latest_settlement_id: latestSettlementId(userId) })}\n\n`);
+  const stop = subscribe(userId, (e) => {
+    // An event committed just before the backlog was read can still be on its way here.
+    if (e.id > lastSent) res.write(sseEvent(e));
+  });
+  const ping = setInterval(() => res.write(`: ping ${Date.now()}\n\n`), 15_000);
+  req.on("close", () => {
+    clearInterval(ping);
+    stop();
+  });
+});
+
+// The same events without a stream: polling when streaming isn't available (after=), and Replay (from, to, settlement_id).
+app.get("/api/money/events", memberRead, (req, res) => {
+  const userId = scope(req);
+  const limit = Number(req.query.limit ?? 500) || 500;
+  const text = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+  const range = { from: text(req.query.from), to: text(req.query.to), settlementId: text(req.query.settlement_id) };
+  const replay = range.from || range.to || range.settlementId || req.query.all === "1";
+  const page = replay ? { events: moneyEventsBetween(userId, { ...range, limit }), more: false } : moneyEventsAfter(userId, Math.max(Number(req.query.after ?? 0) || 0, 0), limit);
+  res.json({ ...page, summary: flowSummary(userId), last_id: page.events.reduce((m, e) => Math.max(m, e.id), 0), latest_settlement_id: latestSettlementId(userId) });
+});
+
 // ---------- Errors ----------
 app.use("/api", (_req, res) => res.status(404).json({ error: "Not found" }));
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  if ((err as { type?: string })?.type === "entity.too.large") return res.status(413).json({ error: `That upload is over the ${UPLOAD_LIMIT} limit.` });
   if (err instanceof PayPalNotConfigured) return res.status(503).json({ error: err.message });
   if (err instanceof PayPalError) {
     return res.status(502).json({ error: err.message, paypal_status: err.status, paypal_body: err.body, debug_id: err.debugId });
@@ -675,12 +787,14 @@ if (fs.existsSync(webDist)) {
   app.use(express.static(webDist, { index: false, maxAge: "1h" }));
   // The built page names the product from BRAND_NAME, so the title is right before any script runs.
   const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
-  const page = fs
-    .readFileSync(path.join(webDist, "index.html"), "utf8")
-    .replace(/<title>[^<]*<\/title>/, () => `<title>${esc(config.BRAND_NAME)}</title>`)
-    .replace(/(<meta name="description" content=")[^"]*(")/, (_m, a: string, b: string) =>
-      `${a}${esc(`${config.BRAND_NAME} pays the open-source maintainers your AI coding agent actually relied on, through PayPal.`)}${b}`);
-  app.get(/^(?!\/api\/).*/, (_req, res) => res.type("html").send(page));
+  // Read on each request: a copy kept from startup keeps pointing at old script files after a rebuild, which shows a blank page.
+  const page = () =>
+    fs
+      .readFileSync(path.join(webDist, "index.html"), "utf8")
+      .replace(/<title>[^<]*<\/title>/, () => `<title>${esc(config.BRAND_NAME)}</title>`)
+      .replace(/(<meta name="description" content=")[^"]*(")/, (_m, a: string, b: string) =>
+        `${a}${esc(`${config.BRAND_NAME} pays the open-source maintainers your AI coding agent actually relied on, through PayPal.`)}${b}`);
+  app.get(/^(?!\/api\/).*/, (_req, res) => res.type("html").send(page()));
 }
 
 app.listen(config.PORT, (err?: Error) => {
@@ -693,6 +807,10 @@ app.listen(config.PORT, (err?: Error) => {
   const missing = Object.entries(features).filter(([, v]) => !v).map(([k]) => k);
   if (missing.length) console.log(`Disabled until configured: ${missing.join(", ")}`);
 });
+
+// Public checks are deleted on their own timer: a server with no PayPal keys has no housekeeping job, and the 24-hour promise still holds there.
+cleanupExpiredChecks();
+setInterval(() => cleanupExpiredChecks(), 10 * 60 * 1000).unref();
 
 // Reconcile open batches and enforce the UNCLAIMED policy hourly, independent of webhook delivery.
 if (features.paypal) {

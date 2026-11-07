@@ -100,5 +100,5 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = [], opts:
     }, opts.poll);
     return () => clearInterval(t);
   }, [load, opts.poll, path]);
-  return { data, error, loading, reload: () => load(), setData, updatedAt };
+  return { data, error, loading, reload: () => load(), refresh: () => load(true), setData, updatedAt };
 }

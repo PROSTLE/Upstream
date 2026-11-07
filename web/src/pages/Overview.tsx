@@ -1,15 +1,18 @@
 import { Link } from "react-router-dom";
 import {
-  ArrowRight, CircleDollarSign, ListChecks, PartyPopper, PlugZap, TerminalSquare,
+  ArrowRight, CircleDollarSign, ListChecks, PartyPopper, Percent, PlugZap, TerminalSquare,
 } from "lucide-react";
 import { useApi } from "../api.ts";
-import { ago, money } from "../format.ts";
+import { ago, money, moneyStr, pct } from "../format.ts";
+import { MoneyFlow, NoMoneyYet } from "../money/MoneyFlow.tsx";
+import { useMoneyRefresh } from "../money/stream.tsx";
 import { setupSteps, useOverview } from "../overview.tsx";
-import { CheckRow, CodeBlock, Card, Empty, ErrorBox, Loading, PackageChip, PageHead, Status } from "../ui.tsx";
+import { CheckRow, CodeBlock, Card, Empty, ErrorBox, Loading, PackageChip, PageHead, Stat, Status } from "../ui.tsx";
 
 export function Overview() {
-  const { data, error } = useOverview();
+  const { data, error, reload } = useOverview();
   const sessions = useApi<any[]>("/api/sessions", [], { poll: 10000 });
+  useMoneyRefresh((e) => e.type === "ledger" || e.type === "earmark" || e.type === "batch", reload);
   if (error && !data) return <div className="page"><ErrorBox error={error} /></div>;
   if (!data) return <div className="page"><Loading /></div>;
   const p = data.pool;
@@ -40,17 +43,25 @@ export function Overview() {
 
       <div className="split">
         <Card title="Where the money goes" sub="Every number comes from PayPal-confirmed ledger entries" icon={<CircleDollarSign size={17} />}>
-          {p.fundingGross === 0 ? (
-            <Empty icon={<CircleDollarSign size={22} />} title="No funds yet" action={<Link className="btn" to="/funding">Add funds</Link>}>
-              Approve your monthly budget once in PayPal. The first subscription payment shows here when PayPal confirms it, with PayPal's fee split out.
-            </Empty>
-          ) : (
-            <FlowDiagram pool={p} />
-          )}
+          {p.fundingGross === 0 ? <NoMoneyYet /> : <MoneyFlow variant="compact" />}
         </Card>
-        <Card title="Setup checklist" sub={`${done} of ${steps.length} done`} icon={<ListChecks size={17} />} tone="violet">
-          {steps.map((s) => <CheckRow key={s.id} ok={s.ok} label={s.label} detail={s.ok ? s.detail : undefined} />)}
-        </Card>
+        <div className="stack" style={{ gap: 16 }}>
+          <Stat
+            label={`PayPal fees ≤ ${pct(data.policy.max_fee_share)} of every payout`}
+            value={moneyStr(data.policy.payout_threshold, cur)}
+            icon={<Percent size={15} />}
+            tone="teal"
+            foot={
+              <>
+                Payouts wait until they reach this, so PayPal's {moneyStr(data.policy.fee_estimate, cur)} fee stays within the limit.
+                {data.policy.highest_fee_share > data.policy.max_fee_share && <> One payout before this rule lost {pct(data.policy.highest_fee_share, 1)}.</>}
+              </>
+            }
+          />
+          <Card title="Setup checklist" sub={`${done} of ${steps.length} done`} icon={<ListChecks size={17} />} tone="violet">
+            {steps.map((s) => <CheckRow key={s.id} ok={s.ok} label={s.label} detail={s.ok ? s.detail : undefined} />)}
+          </Card>
+        </div>
       </div>
 
       <div>
@@ -119,56 +130,5 @@ function Pipe({ n, to, label, value, foot }: { n: number; to: string; label: str
       <span className="pipe-v">{value}</span>
       <span className="pipe-f">{foot}</span>
     </Link>
-  );
-}
-
-/** A small Sankey-style picture of real ledger totals. */
-export function FlowDiagram({ pool }: { pool: any }) {
-  const cur = pool.currency;
-  const gross = pool.fundingGross;
-  const parts = [
-    { label: "PayPal fees", v: -pool.fundingFees - pool.payoutFees, color: "var(--neutral-bar)" },
-    { label: "Paid to maintainers", v: -pool.payoutsSent - pool.returned, color: "var(--teal)" },
-    { label: "In flight", v: pool.inFlight, color: "var(--accent)" },
-    { label: "Held for unclaimed", v: pool.reserved, color: "var(--amber)" },
-    { label: "Available", v: pool.available, color: "var(--violet)" },
-  ].filter((x) => x.v > 0);
-  const W = 640, colW = 16, gap = 10, labelH = 34;
-  // fees + paid + in flight + held + available always sums to the gross funded amount.
-  const total = Math.max(gross, parts.reduce((a, x) => a + x.v, 0), 1);
-  const scale = 220;
-  // Each band keeps room for its two-line label, so small amounts (like fees) never overlap their neighbours.
-  const bands = parts.map((x) => ({ ...x, h: Math.max((x.v / total) * scale, 4) }));
-  const slots = bands.map((b) => Math.max(b.h, labelH));
-  const H = slots.reduce((a, h) => a + h, 0) + gap * (bands.length - 1) + 30;
-  let y = 20;
-  const leftH = Math.max((gross / total) * scale, 8);
-  const leftY = (H - leftH) / 2;
-  let ly = leftY;
-  return (
-    <svg className="flow" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Money flow: funded ${money(gross, cur)}, ${parts.map((x) => `${x.label} ${money(x.v, cur)}`).join(", ")}`}>
-      <rect x={40} y={leftY} width={colW} height={leftH} rx={4} style={{ fill: "var(--accent)" }} />
-      <text x={40} y={Math.max(leftY - 8, 12)} fontSize="12" className="t-strong" fontWeight={600}>Funded {money(gross, cur)}</text>
-      {bands.map((part, i) => {
-        const h = part.h;
-        const sh = (part.v / total) * leftH;
-        const sy = ly;
-        ly += sh;
-        const ty = y + (slots[i] - h) / 2;
-        y += slots[i] + gap;
-        const x1 = 40 + colW, x2 = 420;
-        return (
-          <g key={part.label}>
-            <path
-              d={`M${x1},${sy} C${(x1 + x2) / 2},${sy} ${(x1 + x2) / 2},${ty} ${x2},${ty} L${x2},${ty + h} C${(x1 + x2) / 2},${ty + h} ${(x1 + x2) / 2},${sy + sh} ${x1},${sy + sh} Z`}
-              style={{ fill: part.color, opacity: 0.2 }}
-            />
-            <rect x={x2} y={ty} width={colW} height={h} rx={4} style={{ fill: part.color }} />
-            <text x={x2 + colW + 10} y={ty + h / 2 - 3} fontSize="12.5" className="t-strong" fontWeight={560}>{part.label}</text>
-            <text x={x2 + colW + 10} y={ty + h / 2 + 13} fontSize="12" className="t-muted" fontFamily="JetBrains Mono Variable, monospace">{money(part.v, cur)}</text>
-          </g>
-        );
-      })}
-    </svg>
   );
 }
