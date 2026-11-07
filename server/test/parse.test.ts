@@ -60,6 +60,15 @@ test("installs run through Claude Code's PowerShell tool on Windows are evidence
   assert.deepEqual(got.map((e) => [e.kind, e.module]), [["dep_install", "zod"], ["cli_run", "tsx"]]);
 });
 
+test("redirects aren't packages, and package.json fields that aren't dependencies aren't either", () => {
+  assert.deepEqual(parseCommand("pip install -q python-dateutil 2>&1 | tail -2").map((c) => c.package), ["python-dateutil"]);
+  assert.deepEqual(parseCommand("npm i zod > log.txt && npm i dayjs 2> err.txt").map((c) => c.package), ["zod", "dayjs"]);
+  const whole = JSON.stringify({ name: "split-cents", type: "module", repository: { type: "git", url: "git+https://github.com/x/y.git" }, homepage: "https://github.com/x/y#readme", dependencies: { zod: "^3.23.8" }, devDependencies: { vitest: "^2.0.0" } }, null, 2);
+  assert.deepEqual(addedManifestDeps("/p/package.json", "", whole).sort(), ["vitest", "zod"]);
+  const edit = `  "homepage": "https://x.dev",\n  "repository": { "type": "git", "url": "git+https://github.com/x/y.git" },\n  "dependencies": { "dayjs": "^1.11.0", "y": "github:x/y" }`;
+  assert.deepEqual(addedManifestDeps("/p/package.json", "", edit).sort(), ["dayjs", "y"]);
+});
+
 test("a command named differently from its package credits the package", () => {
   assert.deepEqual(parseCommand("npx tsc --noEmit && npx ng build && pnpm dlx tsx a.ts").map((c) => c.package), ["typescript", "@angular/cli", "tsx"]);
 });

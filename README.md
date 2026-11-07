@@ -9,10 +9,10 @@
 </p>
 
 <p align="center">
-  <a href="https://upstream-vvua.onrender.com/dashboard"><b>Live demo, no sign-in</b></a> Ã‚Â·
-  <a href="#try-it">Try it</a> Ã‚Â·
-  <a href="#how-paypal-is-used">How PayPal is used</a> Ã‚Â·
-  <a href="#how-it-works">How it works</a> Ã‚Â·
+  <a href="https://upstream-vvua.onrender.com/dashboard"><b>Live demo, no sign-in</b></a> Ãƒâ€šÃ‚Â·
+  <a href="#try-it">Try it</a> Ãƒâ€šÃ‚Â·
+  <a href="#how-paypal-is-used">How PayPal is used</a> Ãƒâ€šÃ‚Â·
+  <a href="#how-it-works">How it works</a> Ãƒâ€šÃ‚Â·
   <a href="#run-it-yourself">Run it yourself</a>
 </p>
 
@@ -116,9 +116,9 @@ PayPal is the only place money moves. Upstream never sees card or bank details, 
 |---|---|---|
 | OAuth2 | `POST /v1/oauth2/token`, cached until expiry | `server/src/paypal/client.ts` |
 | Catalog Products | `POST /v1/catalogs/products` (direct, not in the SDK) | `subscriptions.ts` |
-| Subscriptions (SDK) | `POST /v1/billing/plans`, `POST /v1/billing/subscriptions`, `GET Ã¢â‚¬Â¦/{id}`, `GET Ã¢â‚¬Â¦/{id}/transactions` | `subscriptions.ts`, `sdk.ts` |
-| Orders v2 (SDK) | `POST /v2/checkout/orders`, `POST Ã¢â‚¬Â¦/{id}/capture`, `GET Ã¢â‚¬Â¦/{id}` | `orders.ts`, `sdk.ts` |
-| Payouts | `POST /v1/payments/payouts`, `GET Ã¢â‚¬Â¦/{id}`, `GET /v1/payments/payouts-item/{id}`, `POST Ã¢â‚¬Â¦/{id}/cancel` | `payouts.ts`, `settlement.ts` |
+| Subscriptions (SDK) | `POST /v1/billing/plans`, `POST /v1/billing/subscriptions`, `GET ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦/{id}`, `GET ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦/{id}/transactions` | `subscriptions.ts`, `sdk.ts` |
+| Orders v2 (SDK) | `POST /v2/checkout/orders`, `POST ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦/{id}/capture`, `GET ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦/{id}` | `orders.ts`, `sdk.ts` |
+| Payouts | `POST /v1/payments/payouts`, `GET ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦/{id}`, `GET /v1/payments/payouts-item/{id}`, `POST ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦/{id}/cancel` | `payouts.ts`, `settlement.ts` |
 | Identity | Authorize, `POST /v1/oauth2/token` (authorization code), `GET /v1/identity/openidconnect/userinfo` | `identity.ts`, `claims.ts` |
 | Webhooks | `GET/POST/PATCH /v1/notifications/webhooks`, `POST /v1/notifications/verify-webhook-signature` | `webhooks.ts`, `events.ts` |
 | Invoicing (Agent Toolkit) | `create_invoice`, `send_invoice` (no email), `record_payment_for_invoice`, `get_invoice` | `statements.ts` |
@@ -204,7 +204,7 @@ flowchart TB
 | `server/src/paypal/` | Every PayPal call; `sdk.ts` wires in PayPal's Server SDK |
 | `server/src/settlement.ts`, `ledger.ts`, `money/` | Payouts, the ledger, live money events, the timeline |
 | `server/src/claims.ts`, `public.ts`, `check.ts` | Maintainer claims, public repo pages and badges, `/check` |
-| `server/test/` | 140 tests |
+| `server/test/` | 141 tests |
 | `web/src/` | The dashboard, home page and in-browser session converter |
 | `mcp/src/`, `.claude-plugin/`, `skills/` | The MCP server and the Claude Code plugin with four skills |
 
@@ -230,6 +230,7 @@ flowchart TB
 | Funding through PayPal's Server SDK | Subscription `I-743R8NEH7WYM`: $10.00 paid, $0.84 fee. A $1.00 one-time top-up on the live app: order created, approved on PayPal's sandbox page, captured, confirmed by a signed webhook, and booked once with PayPal's $0.52 fee. Every step went through the SDK. |
 | Money moves on screen only when PayPal confirms it | A second payout (`LK2R3WYGYTZM2`, $1.70) watched live. Totals added up to the cent throughout. |
 | The AI finds what dependency lists miss | 12 scripted scenarios, 3 runs each: Muse Spark 12 of 12 every run, counting imports 7 of 12. |
+| On real sessions, it's as accurate as counting imports, with fairer shares | Six real Claude Code sessions that built Upstream, 63 packages labelled blind, before any review ran. Muse Spark: precision 0.78, recall 0.97, F1 0.86. Counting imports: 0.80, 0.95, 0.87. Muse's shares are closer to the labels (error 0.67 against 0.86), but it also pays small shares to build tools such as `typescript` and `vite`. The scores are live on the [AI accuracy](https://upstream-vvua.onrender.com/eval) page. |
 | Code overrules the AI | 9 of 9 deliberately malicious AI outputs blocked. |
 | It works with nothing installed | A real 33 MB session went through `/check` in 44 s. 17 packages declared, 6 relied on, and only 0.85 MB left the browser. |
 
@@ -259,7 +260,7 @@ Counting imports scores precision 0.85 and recall 0.79. Muse Spark scores 1.00 a
 
 </details>
 
-**Not done yet.** It's one real session, and the payout went to a test package this project owns, so it proves the system works, not demand. Log in with PayPal is off. Unclaimed cancels and refunds are tested only against a stand-in for PayPal. No statement has been issued live, because the sandbox app lacks PayPal's Invoicing permission. The *AI accuracy* page has no real labelled sessions yet.
+**Not done yet.** It's one real session, and the payout went to a test package this project owns, so it proves the system works, not demand. Log in with PayPal is off. Unclaimed cancels and refunds are tested only against a stand-in for PayPal. No statement has been issued live, because the sandbox app lacks PayPal's Invoicing permission. The real-session labels were written by Claude, the coding assistant on this project, from each session's transcript, with one rule: *meaningful* if code the session wrote into Upstream relies on the package, *incidental* for build and type tooling, fonts and throwaway scripts, *not used* otherwise. They're blind, but they're not an independent person's judgement.
 
 ---
 
@@ -268,7 +269,7 @@ Counting imports scores precision 0.85 and recall 0.79. Muse Spark scores 1.00 a
 The live app is **https://upstream-vvua.onrender.com**, on the PayPal sandbox.
 
 1. **[See the live demo](https://upstream-vvua.onrender.com/dashboard).** No sign-in. It's the creator's own space, read-only: real sessions, AI reviews and sandbox payouts.
-2. **Money records Ã¢â€ â€™ Replay Ã¢â€ â€™ Everything.** Watch the real payout move through the diagram. The timeline and the PayPal API log are on the same page.
+2. **Money records ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Replay ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Everything.** Watch the real payout move through the diagram. The timeline and the PayPal API log are on the same page.
 3. **Pay maintainers.** Open the payout and read its policy checks.
 4. **[/check](https://upstream-vvua.onrender.com/check).** Drop a Claude Code session file and see what the agent really relied on. No sign-in, and it's deleted after 24 hours.
 5. **Sign in with GitHub** for your own empty space, with one clear next step. Funding it needs a PayPal sandbox buyer login, which is in the Devpost testing notes.
@@ -291,15 +292,15 @@ npm start                   # http://localhost:8787
 
 | Variable | Where to get it |
 |---|---|
-| `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` | developer.paypal.com Ã¢â€ â€™ Apps & Credentials Ã¢â€ â€™ a **Sandbox** app |
-| `MODEL_API_KEY` | dev.meta.ai Ã¢â€ â€™ API keys |
+| `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` | developer.paypal.com ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Apps & Credentials ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ a **Sandbox** app |
+| `MODEL_API_KEY` | dev.meta.ai ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ API keys |
 | `ADMIN_TOKEN`, `INGEST_TOKEN` | Any long random strings |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | A GitHub OAuth app with two callbacks: `PUBLIC_BASE_URL/api/auth/github/callback` and `PUBLIC_BASE_URL/api/claims/github/callback` |
 | `GITHUB_TOKEN` | Optional. Raises GitHub's rate limit. |
 | `OPERATOR_GITHUB_LOGINS` | Your GitHub login |
 | `PUBLIC_BASE_URL` | Your https address (a tunnel locally). Leave it out on Render. |
 
-A missing credential turns its feature off, and the dashboard says which one. Nothing falls back to mock data. `npm test` runs 140 tests. The PayPal stand-in exists only in the tests, and the product always talks to PayPal. To deploy, use [`render.yaml`](render.yaml): one web service with a persistent disk, which needs a paid instance.
+A missing credential turns its feature off, and the dashboard says which one. Nothing falls back to mock data. `npm test` runs 141 tests. The PayPal stand-in exists only in the tests, and the product always talks to PayPal. To deploy, use [`render.yaml`](render.yaml): one web service with a persistent disk, which needs a paid instance.
 
 ---
 
@@ -316,10 +317,10 @@ A missing credential turns its feature off, and the dashboard says which one. No
 <details>
 <summary><b>Sources</b></summary>
 
-PayPal: [Payouts API](https://developer.paypal.com/docs/api/payments.payouts-batch/v1/) Ã‚Â· [Cancel unclaimed payouts](https://developer.paypal.com/payouts/use-payouts/cancel-reverse-payouts) Ã‚Â· [Webhook events](https://developer.paypal.com/api/rest/webhooks/event-names/) Ã‚Â· [Verify webhook signature](https://developer.paypal.com/api/webhooks/v1/verify-webhook-signature-post) Ã‚Â· [Subscriptions API](https://developer.paypal.com/docs/api/subscriptions/v1/) Ã‚Â· [Payouts fees](https://developer.paypal.com/payouts/fees) Ã‚Â· [Server SDK](https://github.com/paypal/PayPal-TypeScript-Server-SDK) Ã‚Â· [Agent Toolkit](https://github.com/paypal/agent-toolkit)
-Data: [deps.dev API v3](https://docs.deps.dev/api/v3/) Ã‚Â· [ecosyste.ms](https://ecosyste.ms/api) Ã‚Â· [GitHub FUNDING.yml](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository)
-Agents: [Claude Code hooks](https://code.claude.com/docs/en/hooks) Ã‚Â· [ATTRIBUTION.md](https://github.com/attributionmd/attribution.md) Ã‚Â· [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
-Context: [Tidelift 2024 (The Register)](https://www.theregister.com/2024/09/18/open_source_maintainers_underpaid/) Ã‚Â· [thanks.dev](https://thanks.dev) Ã‚Â· [ecosyste.ms Funds](https://funds.ecosyste.ms)
+PayPal: [Payouts API](https://developer.paypal.com/docs/api/payments.payouts-batch/v1/) Ãƒâ€šÃ‚Â· [Cancel unclaimed payouts](https://developer.paypal.com/payouts/use-payouts/cancel-reverse-payouts) Ãƒâ€šÃ‚Â· [Webhook events](https://developer.paypal.com/api/rest/webhooks/event-names/) Ãƒâ€šÃ‚Â· [Verify webhook signature](https://developer.paypal.com/api/webhooks/v1/verify-webhook-signature-post) Ãƒâ€šÃ‚Â· [Subscriptions API](https://developer.paypal.com/docs/api/subscriptions/v1/) Ãƒâ€šÃ‚Â· [Payouts fees](https://developer.paypal.com/payouts/fees) Ãƒâ€šÃ‚Â· [Server SDK](https://github.com/paypal/PayPal-TypeScript-Server-SDK) Ãƒâ€šÃ‚Â· [Agent Toolkit](https://github.com/paypal/agent-toolkit)
+Data: [deps.dev API v3](https://docs.deps.dev/api/v3/) Ãƒâ€šÃ‚Â· [ecosyste.ms](https://ecosyste.ms/api) Ãƒâ€šÃ‚Â· [GitHub FUNDING.yml](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository)
+Agents: [Claude Code hooks](https://code.claude.com/docs/en/hooks) Ãƒâ€šÃ‚Â· [ATTRIBUTION.md](https://github.com/attributionmd/attribution.md) Ãƒâ€šÃ‚Â· [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
+Context: [Tidelift 2024 (The Register)](https://www.theregister.com/2024/09/18/open_source_maintainers_underpaid/) Ãƒâ€šÃ‚Â· [thanks.dev](https://thanks.dev) Ãƒâ€šÃ‚Â· [ecosyste.ms Funds](https://funds.ecosyste.ms)
 
 </details>
 

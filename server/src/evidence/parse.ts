@@ -191,6 +191,18 @@ function shellSplit(cmd: string): string[][] {
       quote = c;
       continue;
     }
+    // A redirect ends the command's arguments: in `pip install x 2>&1`, the `2` is a file descriptor, not a package.
+    if (c === ">" || c === "<") {
+      if (/^\d+$/.test(tok)) tok = "";
+      push();
+      if (cur.length) segments.push(cur);
+      cur = [];
+      while (i + 1 < cmd.length && /[>&\d]/.test(cmd[i + 1])) i++;
+      // Skip the redirect's target too, so a file name isn't read as a command.
+      while (i + 1 < cmd.length && /\s/.test(cmd[i + 1])) i++;
+      while (i + 1 < cmd.length && !/[\s;&|()]/.test(cmd[i + 1])) i++;
+      continue;
+    }
     // Braces end a command too, for PowerShell blocks such as `if ($?) { npm install zod }` and shell groups.
     if (c === "&" || c === ";" || c === "|" || c === "\n" || c === "(" || c === ")" || c === "{" || c === "}") {
       push();
@@ -360,14 +372,22 @@ export function depsFromManifestFiles(files: Record<string, string>): ManifestDe
 }
 
 /** Dependency names that appear in `after` text but not in `before` (Edit snippets). */
+const NOT_DEPENDENCY_FIELDS = new Set(["version", "node", "npm", "name", "description", "homepage", "url", "type", "repository", "bugs", "funding", "author", "license", "main", "module", "types", "typings", "browser", "email", "directory", "packageManager", "private"]);
+
 export function addedManifestDeps(file: string, before: string, after: string): string[] {
   const kind = isManifest(file);
   if (!kind) return [];
   if (kind === "package.json") {
+    // A whole file is read exactly, by its dependency sections. A partial edit is matched by shape, skipping fields that
+    // are never dependencies: `"homepage": "https://…"` or `"repository": { "type": "git" }` look like one otherwise.
     const pick = (s: string) => {
+      try {
+        const j = JSON.parse(s);
+        if (j && typeof j === "object" && !Array.isArray(j)) return new Set(depsFromPackageJson(s));
+      } catch {}
       const set = new Set<string>();
-      for (const m of s.matchAll(/"((?:@[^"/\s]+\/)?[^"/\s]+)"\s*:\s*"((?:[~^<>=]*\s*v?\d)|\*|latest|next|workspace:|npm:|file:|link:|git|https?:)[^"]*"/g)) {
-        if (NPM_NAME.test(m[1]) && !["version", "node", "npm"].includes(m[1])) set.add(m[1]);
+      for (const m of s.matchAll(/"((?:@[^"/\s]+\/)?[^"/\s]+)"\s*:\s*"((?:[~^<>=]*\s*v?\d)|\*|latest|next|workspace:|npm:|file:|link:|git\+|git:|github:|https?:)[^"]*"/g)) {
+        if (NPM_NAME.test(m[1]) && !NOT_DEPENDENCY_FIELDS.has(m[1])) set.add(m[1]);
       }
       return set;
     };
