@@ -632,3 +632,26 @@ a.list-item:hover, button.list-item:hover { background: var(--surface-2); color:
 .home-empty { margin: 0; padding: 16px 20px; font-size: 13px; line-height: 1.5; color: var(--muted); border-top: 1px solid var(--border); }
 .home-paths > div { background: color-mix(in srgb, var(--surface) 72%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
 .home .btn:not(.primary) { background: color-mix(in srgb, var(--surface) 70%, transparent); }
+
+/* ---------- money timeline (Bryntum Scheduler, Community) ---------- */
+.timeline { display: flex; flex-direction: column; gap: 10px; }
+.timeline .b-scheduler { border-radius: 12px; overflow: hidden; border: 1px solid var(--border); font-family: inherit; }
+.timeline .tl-scheduled { opacity: 0.45; }
+.timeline .tl-ongoing { outline: 2px dashed var(--text-2); outline-offset: 1px; }
+.tl-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; font-size: 12.5px; color: var(--text-2); }
+.tl-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 4px; margin-right: 6px; vertical-align: -1px; }
+.tl-legend .muted { margin-left: auto; }
+.tl-tip { max-width: 320px; font-size: 13px; line-height: 1.45; }
+.tl-tip p { margin: 4px 0 0; }
+
+/* ---------- PayPal API log: calls made through the APIMatic-generated SDK ---------- */
+.through-sdk { color: var(--teal-ink); font-weight: 600; }
+
+/* ---------- How it's built ---------- */
+.built-where { display: flex; flex-direction: column; gap: 6px; }
+.built-where .pill { text-decoration: none; }
+.built-live { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; }
+.built-live .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex: none; }
+.built-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.built-list { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+@media (max-width: 640px) { .built-cols { grid-template-columns: 1fr; } .tl-legend .muted { margin-left: 0; } }

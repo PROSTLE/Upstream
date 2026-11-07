@@ -38,7 +38,7 @@ The name is the idea. Money should flow back upstream, to where the work came fr
 - [How AI is used, and kept on a leash](#how-ai-is-used-and-kept-on-a-leash)
 - [The evidence layer](#the-evidence-layer)
 - [Architecture](#architecture)
-- [AG Grid and Render in Upstream](#ag-grid-and-render-in-upstream)
+- [Partner tools: AG Grid, Bryntum, APIMatic and Render](#partner-tools-ag-grid-bryntum-apimatic-and-render)
 - [Trust and safety](#trust-and-safety)
 - [What's proven so far](#whats-proven-so-far), including the benchmark
 - [Try it in two minutes](#try-it-in-two-minutes)
@@ -79,7 +79,7 @@ These are real screens, showing the sandbox run described [further down](#one-se
     </td>
     <td valign="top">
       <img src="docs/screenshots/money-records.png" alt="Money records with the ledger and PayPal API log"><br>
-      <b>Money records.</b> Every PayPal-confirmed movement, the ledger, and a log of every call made to PayPal's API.
+      <b>Money records.</b> Every PayPal-confirmed movement, the money timeline (Bryntum), the ledger, and every call made to PayPal's API, marked by whether it went through PayPal's Server SDK.
     </td>
   </tr>
 </table>
@@ -186,8 +186,8 @@ PayPal is the only place money moves. Upstream never holds card details or bank 
 
 | Job | PayPal product | What Upstream does with it |
 |---|---|---|
-| Fund a monthly budget | **Subscriptions** (catalog product, plan, subscription, transactions) | You approve the "agent tithe" on PayPal's own page. Upstream reads the subscription's transactions to book each payment and its fee. |
-| Add money once | **Orders v2** (create, capture, read) | A one-time top-up, captured on the server when you return from PayPal. Gross and fee come from the capture's `seller_receivable_breakdown`. |
+| Fund a monthly budget | **Subscriptions** (catalog product, plan, subscription, transactions), through **PayPal's Server SDK** | You approve the "agent tithe" on PayPal's own page. Upstream reads the subscription's transactions to book each payment and its fee. |
+| Add money once | **Orders v2** (create, capture, read), through **PayPal's Server SDK** | A one-time top-up, captured on the server when you return from PayPal. Gross and fee come from the capture's `seller_receivable_breakdown`. |
 | Pay maintainers | **Payouts** (create batch, show batch, show item, cancel unclaimed item) | One batch per approved plan, to verified maintainers only. |
 | Verify a payout email | **Log in with PayPal** (Identity) | Optional: maintainers connect their PayPal account, so the email is one PayPal has verified. Upstream doesn't keep their PayPal token. |
 | Keep records straight | **Webhooks** (create, update, `verify-webhook-signature`) | Every event is signature-checked, stored and processed once. |
@@ -196,6 +196,7 @@ PayPal is the only place money moves. Upstream never holds card details or bank 
 
 **The details that matter**
 
+- **Orders and Subscriptions through PayPal's own SDK.** These go through `@paypal/paypal-server-sdk`, PayPal's official TypeScript SDK, which APIMatic generates. Payouts, Webhooks and Log in with PayPal aren't in that SDK, so they're direct calls. [More below](#apimatic-paypals-server-sdk).
 - **No double payments.** Every batch uses `sender_batch_id = upstream-<settlement id>`. PayPal completes a payment only once per `sender_batch_id` and rejects reuse within 30 days, so a retry after a server error is safe. The request body is frozen when you approve, and the same id is sent as `PayPal-Request-Id`. **Replay batch** re-sends the identical body on purpose and shows PayPal's real rejection.
 - **Unclaimed money comes back.** PayPal returns unclaimed payouts after 30 days unless they're cancelled. Upstream cancels `UNCLAIMED` items after `POLICY_CANCEL_UNCLAIMED_AFTER_DAYS` (or when you ask), books the return, holds the money for that repo again, and flags the claim so the maintainer can fix their email.
 - **Fees are PayPal's real numbers.** Funding fees come from the subscription transaction's `fee_amount`, and payout fees from each item's `payout_item_fee`. A fee reserve keeps the budget safe until PayPal reports the actual fee.
@@ -210,10 +211,10 @@ PayPal is the only place money moves. Upstream never holds card details or bank 
 | API | Calls | Where |
 |---|---|---|
 | OAuth2 | `POST /v1/oauth2/token` (cached until expiry) | `server/src/paypal/client.ts` |
-| Catalog Products | `POST /v1/catalogs/products` | `server/src/paypal/subscriptions.ts` |
-| Subscriptions | `POST /v1/billing/plans`, `POST /v1/billing/subscriptions` (approve link), `GET /v1/billing/subscriptions/{id}`, `GET …/{id}/transactions` | `subscriptions.ts`, `funding.ts` |
+| Catalog Products | `POST /v1/catalogs/products` (direct: the SDK has no Catalog Products API) | `server/src/paypal/subscriptions.ts` |
+| Subscriptions (through PayPal's Server SDK) | `POST /v1/billing/plans`, `POST /v1/billing/subscriptions` (approve link), `GET /v1/billing/subscriptions/{id}`, `GET …/{id}/transactions` | `subscriptions.ts`, `sdk.ts`, `funding.ts` |
 | Payouts | `POST /v1/payments/payouts`, `GET /v1/payments/payouts/{id}` (all pages), `GET /v1/payments/payouts-item/{id}`, `POST /v1/payments/payouts-item/{id}/cancel` | `payouts.ts`, `settlement.ts` |
-| Orders v2 | `POST /v2/checkout/orders` (intent CAPTURE, `payment_source.paypal.experience_context`), `POST /v2/checkout/orders/{id}/capture` and `GET /v2/checkout/orders/{id}` with `Prefer: return=representation` | `paypal/orders.ts`, `topups.ts` |
+| Orders v2 (through PayPal's Server SDK) | `POST /v2/checkout/orders` (intent CAPTURE, `payment_source.paypal.experience_context`), `POST /v2/checkout/orders/{id}/capture` and `GET /v2/checkout/orders/{id}` with `Prefer: return=representation` | `paypal/orders.ts`, `sdk.ts`, `topups.ts` |
 | Identity (Log in with PayPal) | `/connect` authorize page, `POST /v1/oauth2/token` (`grant_type=authorization_code`), `GET /v1/identity/openidconnect/userinfo` (falls back to `/v1/identity/oauth2/userinfo`, the path the integration guide shows) | `paypal/identity.ts`, `claims.ts` |
 | Webhooks | `GET/POST/PATCH /v1/notifications/webhooks`, `POST /v1/notifications/verify-webhook-signature` (raw body spliced in byte for byte) | `webhooks.ts`, `events.ts` |
 | Invoicing (through the Agent Toolkit) | `create_invoice`, `send_invoice`, `record_payment_for_invoice`, `get_invoice`, which call `/v2/invoicing/invoices` | `paypal/statements.ts` |
@@ -291,12 +292,12 @@ flowchart TB
         DB[("SQLite<br/>one file on a persistent disk")]
         JOBS["Hourly reconciler<br/>and 24-hour cleanup"]
     end
-    WEB["Dashboard<br/>React, Vite, AG Grid"] <--> API
+    WEB["Dashboard<br/>React, Vite, AG Grid,<br/>Bryntum Scheduler"] <--> API
     HK -->|evidence, with a per-person token| API
     MCP -->|guarded payout tools| API
     API <--> DB
     JOBS <--> DB
-    API <-->|Subscriptions, Orders, Payouts,<br/>Identity, Invoicing| PP["PayPal sandbox"]
+    API <-->|"Orders and Subscriptions through<br/>PayPal's Server SDK, by APIMatic.<br/>Payouts, Identity, Invoicing"| PP["PayPal sandbox"]
     PP -->|signed webhooks| API
     API -->|structured output| MUSE["Meta Muse Spark"]
     API --> REG["deps.dev, ecosyste.ms,<br/>npm registry, GitHub"]
@@ -307,7 +308,8 @@ flowchart TB
 - **Node.js 24** with built-in SQLite (`node:sqlite`) and TypeScript type stripping, so there's no database server, no native build and no compile step for the server.
 - **Express 5** for the API, including Server-Sent Events for the live money stream.
 - **SQLite**, one file. Every person's records live in the same database and are kept apart by checks on every route.
-- **React 19, Vite, React Router, AG Grid and AG Charts** for the dashboard.
+- **React 19, Vite, React Router, AG Grid, AG Charts and Bryntum Scheduler** for the dashboard.
+- **PayPal's Server SDK** (`@paypal/paypal-server-sdk`, generated by APIMatic) for Orders and Subscriptions, and direct REST calls for the rest of PayPal's APIs.
 - **Hosted on Render**: one web service with a 1 GB persistent disk, defined in `render.yaml`.
 
 **Where things live in this repo**
@@ -317,22 +319,28 @@ flowchart TB
 | `hook/` | The Claude Code hook, its `hooks.json` and the installer |
 | `server/src/evidence/` | Turning tool calls into evidence, building candidates, importing session files |
 | `server/src/attribution/` | The Muse Spark call, the validator, the baseline, the dependency-list split and the accuracy report |
-| `server/src/paypal/` | Every PayPal call: OAuth, subscriptions, orders, payouts, identity, webhooks, statements |
-| `server/src/settlement.ts`, `ledger.ts`, `money/` | Planning, approving and sending payouts, the ledger, and the live money events |
+| `server/src/paypal/` | Every PayPal call: OAuth, subscriptions, orders, payouts, identity, webhooks, statements. `sdk.ts` connects PayPal's Server SDK to Upstream's transport |
+| `server/src/settlement.ts`, `ledger.ts`, `money/` | Planning, approving and sending payouts, the ledger, the live money events, and the money timeline's data |
 | `server/src/claims.ts`, `public.ts`, `check.ts` | Maintainer claims, public repo pages and badges, and the `/check` page |
 | `server/src/audit.ts`, `auth.ts`, `users.ts` | The live safety checks, Sign in with GitHub, and private spaces |
 | `server/src/resolve/` | Package to repository, through deps.dev, ecosyste.ms and the npm registry |
-| `server/test/` | 128 tests, including one person attacking another over HTTP |
-| `web/src/` | The dashboard, the home page and the in-browser session converter |
+| `server/test/` | 136 tests, including one person attacking another over HTTP |
+| `web/src/` | The dashboard, the home page, the "How it's built" page, the money timeline and the in-browser session converter |
 | `mcp/src/` | The MCP server that gives agents guarded payout tools |
 | `.claude-plugin/`, `skills/` | The Claude Code plugin: hooks, MCP server and four skills (`/credits`, `/fund`, `/receipt`, `/statement`). The `SKILL.md` files are part of the plugin, which is why they're the only other Markdown files here. |
 | `scripts/` | The dev runner, the icon renderer, the benchmark and the `/check` sample builder |
 
 ---
 
-## AG Grid and Render in Upstream
+## Partner tools: AG Grid, Bryntum, APIMatic and Render
 
-Two of the hackathon's partner tools are part of how Upstream is built: **AG Grid** for its tables and charts, and **Render** for hosting. This is what each one does here.
+Four of the hackathon's partner tools are part of how Upstream is built: **AG Grid** for its tables and charts, **Bryntum** for the money timeline, **APIMatic** through PayPal's Server SDK, and **Render** for hosting. This is what each one does here.
+
+The app shows the same thing on its own [How it's built](https://upstream-vvua.onrender.com/how-its-built) page, which anyone can open. It lists each tool, what it does and where to see it, with live numbers from the server: how many PayPal calls went through the SDK, the SDK's version, and the commit Render is running.
+
+<img src="docs/screenshots/how-its-built.png" alt="The How it's built page on the live app">
+
+The dashboard also labels each one where it's used: *Bryntum Scheduler* on the money timeline, and *APIMatic SDK* on the funding cards and the PayPal API log.
 
 ### AG Grid: the tables and charts
 
@@ -380,6 +388,53 @@ flowchart LR
 </table>
 
 The payout and money-records screens [above](#a-look-at-the-app) show the other grids, and the reviewed session shows the comparison chart.
+
+### Bryntum: the money timeline
+
+Upstream uses **Bryntum Scheduler, Community edition** (`@bryntum/scheduler-community` and `@bryntum/scheduler-react-community`, version 8.0.0). It's MIT licensed and installs from public npm with no key, so anyone who clones this repo can run it. It draws the **money timeline** on the Money records page.
+
+- **What it shows.** A row for your budget and one for each repository your agent relied on. Every bar is a stored record: a payment PayPal confirmed, a payout, or a share held for a maintainer who hasn't claimed it yet. It also shows what's scheduled next: your next subscription payment (PayPal's `next_billing_time`), the day a held share goes back to your pool (`POLICY_RESERVE_DAYS`), and the day an unclaimed payout will be cancelled (`POLICY_CANCEL_UNCLAIMED_AFTER_DAYS`). Hover a bar for the exact dates and PayPal's ids.
+- **Where the data comes from.** `GET /api/money/timeline` ([`server/src/money/timeline.ts`](server/src/money/timeline.ts)) builds the rows and bars from the signed-in person's allocations, payout items, ledger and subscription, and nobody else's. Nothing on it is estimated except the dates those two rules set.
+- **How it's wired.** [`web/src/money/Timeline.tsx`](web/src/money/Timeline.tsx) renders `BryntumScheduler` read-only, with dragging, editing and menus turned off. The colours match the money diagram: a dashed outline means still going, and a faded bar means scheduled. It loads Bryntum's light or dark theme to follow the app's theme switch, and the module is split out, so only the Money records page downloads Bryntum.
+
+<img src="docs/screenshots/money-timeline.png" alt="The money timeline, drawn with Bryntum Scheduler">
+
+*Real sandbox data: the $10.00 subscription payment and the next one PayPal has scheduled, the $3.59 paid to `split-cents`, and `zod`'s $3.59 held until its maintainer claims it.*
+
+```mermaid
+flowchart LR
+    DB[("SQLite: allocations, payout items,<br/>ledger, subscriptions")] --> API["GET /api/money/timeline<br/>only this person's records"]
+    API --> T["Timeline.tsx"]
+    T --> B["BryntumScheduler<br/>read-only, light or dark"]
+```
+
+### APIMatic: PayPal's Server SDK
+
+PayPal's official TypeScript SDK, [`@paypal/paypal-server-sdk`](https://github.com/paypal/PayPal-TypeScript-Server-SDK), is generated by APIMatic from PayPal's API definitions. Its source files say so ("automatically generated by APIMATIC"), and it's built on APIMatic's runtime packages. Upstream uses version 2.5.0 for every PayPal call the SDK covers:
+
+| PayPal API | SDK methods Upstream uses | Upstream code |
+|---|---|---|
+| Orders v2 | `createOrder`, `captureOrder`, `getOrder`, for one-time top-ups | [`server/src/paypal/orders.ts`](server/src/paypal/orders.ts) |
+| Subscriptions | `createBillingPlan`, `createSubscription`, `getSubscription`, `listSubscriptionTransactions`, for the monthly budget | [`server/src/paypal/subscriptions.ts`](server/src/paypal/subscriptions.ts) |
+
+The SDK doesn't cover Payouts, Webhooks, Log in with PayPal or Catalog Products, so those are still direct REST calls. Statements go through PayPal's Agent Toolkit, which is itself built on an earlier version of the same SDK.
+
+- **How it's wired.** [`server/src/paypal/sdk.ts`](server/src/paypal/sdk.ts) creates the SDK client. The SDK builds each request from its typed models, sets `PayPal-Request-Id` and `Prefer`, and turns PayPal's error replies into typed errors, which Upstream maps to the same `PayPalError` a direct call throws. The SDK's HTTP layer is axios, and Upstream gives it an axios adapter, so every SDK request goes over Upstream's own transport. That means the SDK uses Upstream's cached access token, `PAYPAL_API_BASE` still applies, the tests can stand in for PayPal, and every call is logged.
+- **Money is still booked from PayPal's own JSON.** The SDK hands back PayPal's raw reply alongside its typed model. That reply has the same shape webhooks deliver, so one code path books both.
+- **Where you see it.** The PayPal API audit log on Money records has a *Through* column, showing **APIMatic SDK** or **Direct REST** for every call. The two funding cards on Add funds are labelled too.
+- **Checked against the real sandbox.** On the live app, syncing the sandbox subscription through the SDK returned it as active, with the same $10.00 payment and $0.84 fee as before, and booked nothing twice. PayPal's real replies passed the SDK's own schema validation. [`server/test/paypal-sdk.test.ts`](server/test/paypal-sdk.test.ts) checks the exact JSON, headers and token the SDK sends.
+
+<img src="docs/screenshots/api-log.png" alt="The PayPal API audit log, showing which calls went through the APIMatic SDK" width="520">
+
+```mermaid
+flowchart LR
+    C["orders.ts and subscriptions.ts"] -->|typed request models| SDK["PayPal Server SDK<br/>generated by APIMatic"]
+    SDK -->|axios adapter| T["Upstream's transport<br/>shared token, call log"]
+    T --> PP["PayPal API"]
+    PP -->|JSON reply| T
+    T --> SDK
+    SDK -->|"PayPal's own JSON"| C
+```
 
 ### Render: hosting
 
@@ -433,6 +488,7 @@ You shouldn't have to take any of this on faith, so the app checks itself in pub
 | Real PayPal funding | Sandbox subscription `I-743R8NEH7WYM`: $10.00 paid, PayPal's $0.84 fee recorded. |
 | Money only moves on screen when PayPal confirms it | A second real sandbox payout (batch `LK2R3WYGYTZM2`, $1.70) was watched live. Each step moved when PayPal's reply or its API confirmed it, every event appeared once, and the totals added up to the cent throughout. |
 | It runs as a hosted service | The [live app](https://upstream-vvua.onrender.com) runs on Render with the real sandbox history above. PayPal's webhook points at it, and its live stream delivers events without buffering. |
+| PayPal's own SDK works with real data | On the live app, syncing the sandbox subscription through PayPal's Server SDK (generated by APIMatic) returned the same $10.00 payment and $0.84 fee and booked nothing twice. PayPal's real replies passed the SDK's own schema validation. A one-time top-up through the SDK hasn't been approved on PayPal's page yet. |
 | The AI finds what dependency lists miss | Live `muse-spark-1.3` on 12 scripted scenarios, 3 runs each: 12 of 12 correct on every run, against 7 of 12 for counting imports. See [the benchmark](#the-benchmark). |
 | A README can't talk the AI into paying it | A package whose README demanded all the money got nothing, and the AI flagged the attempt in 3 of 3 runs. |
 | Code overrules the AI | 9 of 9 deliberately malicious AI outputs were blocked. |
@@ -521,10 +577,11 @@ Nothing falls back to mock data. A missing credential turns that feature off, an
 **Tests**
 
 ```bash
-npm test                     # 128 tests: parsers, evidence, the validator, money math, the hook and its spool,
+npm test                     # 136 tests: parsers, evidence, the validator, money math, the hook and its spool,
                              # top-ups, claims, an end-to-end settlement, the safety checks, sign-in,
                              # one person attacking another over HTTP, the session converter, /check and its limits,
-                             # fee thresholds, money events and their stream, invites and statements
+                             # fee thresholds, money events and their stream, invites and statements,
+                             # the requests PayPal's Server SDK sends, and the money timeline
 npm run typecheck
 npm run doctor               # live, read-only checks against PayPal, Muse Spark, GitHub, deps.dev and ecosyste.ms
 node scripts/benchmark.mjs   # the benchmark above, against the live model (about $0.30)
@@ -540,6 +597,7 @@ The settlement test drives plan, approve, send twice (exactly one PayPal call), 
 | Tool | How it's used |
 |---|---|
 | **PayPal REST APIs** (sandbox) | Subscriptions, Orders v2, Payouts, Webhooks and Identity, as described above. |
+| **PayPal Server SDK** (`@paypal/paypal-server-sdk`, generated by **APIMatic**) | Sends every Orders v2 and Subscriptions call, over Upstream's own transport. |
 | **PayPal Agent Toolkit** (`@paypal/agent-toolkit`) | Issues monthly statements as PayPal invoices. |
 | **Muse Spark** (`muse-spark-1.3` on Meta's Model API, through its Anthropic-format Messages endpoint with the Anthropic TypeScript SDK) | Evidence-based value attribution with structured output. |
 | **Claude Code hooks** | The evidence collector (`SessionStart`, `PostToolUse`, `Stop`, `SessionEnd`). |
@@ -547,6 +605,7 @@ The settlement test drives plan, approve, send twice (exactly one PayPal call), 
 | **Model Context Protocol** (`@modelcontextprotocol/sdk`) | Upstream's MCP server, which gives agents guarded payout tools. |
 | **deps.dev API v3**, **ecosyste.ms Packages API**, **npm registry**, **GitHub REST API** | Package to repository, funding links, `FUNDING.yml`, repository permissions, and Sign in with GitHub. |
 | **AG Grid Community** and **AG Charts Community** | The sessions, packages, payouts, allocations, ledger and API-call grids, and the review and accuracy charts. |
+| **Bryntum Scheduler Community** (`@bryntum/scheduler-community`, MIT) | The money timeline on the Money records page. |
 | **fetch-event-source** (`@microsoft/fetch-event-source`) | The dashboard's live money stream, with the sign-in header a browser's own EventSource can't send. |
 | **Render** | Hosts the live app, from `render.yaml`: one web service with a persistent disk for SQLite. |
 | **resvg** (`@resvg/resvg-js`) | Renders every app icon from the one hand-drawn SVG mark (`scripts/icons.mjs`). |

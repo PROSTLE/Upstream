@@ -29,17 +29,22 @@ export class PayPalNotConfigured extends Error {
 
 type FetchLike = typeof fetch;
 let fetchImpl: FetchLike = fetch;
+let transport = 0;
 /** Tests inject a transport here; production always uses the global fetch. */
 export function setPayPalFetch(f: FetchLike): void {
   fetchImpl = f;
   cachedToken = undefined;
+  transport++;
 }
-/** The transport in use, for calls that don't take the app's bearer token (Log in with PayPal's code exchange). */
+/** The transport in use: for the code exchange of Log in with PayPal, and for every request PayPal's Server SDK sends (paypal/sdk.ts). */
 export const paypalFetch = (): FetchLike => fetchImpl;
+/** Changes whenever the transport is replaced, so a client built on the old one is rebuilt. */
+export const transportVersion = (): number => transport;
 
 let cachedToken: { token: string; expiresAt: number } | undefined;
 
-async function accessToken(): Promise<string> {
+/** The app's OAuth2 client-credentials token, cached until a minute before it expires. PayPal's Server SDK uses it too. */
+export async function accessToken(): Promise<string> {
   if (!features.paypal) throw new PayPalNotConfigured();
   if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) return cachedToken.token;
   const basic = Buffer.from(`${config.PAYPAL_CLIENT_ID}:${config.PAYPAL_CLIENT_SECRET}`).toString("base64");
@@ -103,6 +108,9 @@ export async function paypal<T = unknown>(
   return { status: res.status, data, debugId };
 }
 
+/** How a call reached PayPal: "sdk" through PayPal's Server SDK, which APIMatic generates; "rest" as a direct REST call. */
+export type CallClient = "sdk" | "rest";
+
 export function logCall(
   method: string,
   path: string,
@@ -111,13 +119,14 @@ export function logCall(
   debugId: string | undefined,
   ms: number,
   errorName: string | undefined,
+  client: CallClient = "rest",
 ) {
   try {
     db()
       .prepare(
-        "INSERT INTO paypal_calls(at, method, path, request_id, status, debug_id, duration_ms, error_name, user_id) VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO paypal_calls(at, method, path, request_id, status, debug_id, duration_ms, error_name, user_id, client) VALUES (?,?,?,?,?,?,?,?,?,?)",
       )
-      .run(now(), method, path, requestId ?? null, status, debugId ?? null, ms, errorName ?? null, actor.getStore() ?? LOCAL_USER);
+      .run(now(), method, path, requestId ?? null, status, debugId ?? null, ms, errorName ?? null, actor.getStore() ?? LOCAL_USER, client);
   } catch {
     // Audit logging must never break a payment call.
   }

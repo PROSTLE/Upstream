@@ -53,6 +53,8 @@ import {
 } from "./settlement.ts";
 import { fromMinor } from "./money.ts";
 import { backfillMoneyEvents, flowSummary, latestSettlementId, moneyEventsAfter, moneyEventsBetween, subscribe } from "./money/flow.ts";
+import { moneyTimeline } from "./money/timeline.ts";
+import { SDK_PACKAGE, SDK_VERSION } from "./paypal/sdk.ts";
 
 initDb(config.DATABASE_PATH);
 failInterruptedChecks();
@@ -544,6 +546,19 @@ app.get("/api/public/repos", (_req, res) => res.json(reposWithMoney()));
 
 app.get("/api/public/activity", (_req, res) => res.json(publicActivity()));
 
+// For the "How it's built" page: server-wide counts of how PayPal calls were made, versions, and where this runs. Nothing personal.
+app.get("/api/public/stack", (_req, res) => {
+  const calls = db().prepare("SELECT client, COUNT(*) AS n, MAX(at) AS last_at FROM paypal_calls GROUP BY client").all() as { client: string; n: number; last_at: string | null }[];
+  const by = (c: string) => calls.find((x) => x.client === c) ?? { n: 0, last_at: null };
+  res.json({
+    paypal_env: config.PAYPAL_ENV,
+    sdk: { package: SDK_PACKAGE, version: SDK_VERSION, calls: Number(by("sdk").n), last_at: by("sdk").last_at },
+    direct: { calls: Number(by("rest").n), last_at: by("rest").last_at },
+    model: config.UPSTREAM_MODEL,
+    hosting: process.env.RENDER === "true" ? { provider: "Render", commit: process.env.RENDER_GIT_COMMIT?.slice(0, 7) ?? null, service: process.env.RENDER_SERVICE_NAME ?? null } : null,
+  });
+});
+
 app.get("/api/public/repos/:owner/:name", (req, res) => {
   const repo = repoParam(req);
   const s = repo ? repoSummary(repo) : undefined;
@@ -757,6 +772,9 @@ app.get("/api/money/stream", memberRead, (req, res) => {
     stop();
   });
 });
+
+// When each repository's money moved and what happens next, drawn with Bryntum Scheduler on the Money records page.
+app.get("/api/money/timeline", memberRead, (req, res) => res.json(moneyTimeline(scope(req))));
 
 // The same events without a stream: polling when streaming isn't available (after=), and Replay (from, to, settlement_id).
 app.get("/api/money/events", memberRead, (req, res) => {
