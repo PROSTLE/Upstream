@@ -115,9 +115,13 @@ export function Home() {
               {authError && <div style={{ marginBottom: 16 }}><ErrorBox error={authError} /></div>}
               <div className="home-cta">
                 <SignIn large />
+                {!user && available && health.access === "public" && <Link className="btn lg" to="/dashboard">See the live demo<ArrowRight size={16} /></Link>}
                 {health.publicCheck && <Link className="btn lg" to="/check"><FileSearch size={16} />Check your own session (no install)</Link>}
                 <Link className="btn lg" to="/claim">I maintain open source</Link>
               </div>
+              {!user && health.access === "public" && (
+                <p className="home-note">The live demo is the creator's own space, open to everyone with no sign-in: real sessions, AI reviews and payouts, read-only.</p>
+              )}
               {health.paypalEnv === "sandbox" && <p className="home-note">Test mode: this server uses the PayPal sandbox, so no real money moves.</p>}
             </div>
             <LiveActivity />

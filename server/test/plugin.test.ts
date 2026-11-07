@@ -32,7 +32,8 @@ test("plugin manifest paths are relative, contained and present", () => {
 
 test("each skill has a description, and the money skill can't be invoked by the model", () => {
   for (const dir of fs.readdirSync(path.join(root, "skills"))) {
-    const md = fs.readFileSync(path.join(root, "skills", dir, "SKILL.md"), "utf8");
+    // A Windows checkout with core.autocrlf turns these into CRLF; the repo and the published plugin keep LF.
+    const md = fs.readFileSync(path.join(root, "skills", dir, "SKILL.md"), "utf8").replace(/\r\n/g, "\n");
     assert.match(md, /^---\n[\s\S]*?description: .+[\s\S]*?\n---\n/, dir);
   }
   assert.match(fs.readFileSync(path.join(root, "skills", "fund", "SKILL.md"), "utf8"), /disable-model-invocation: true/);

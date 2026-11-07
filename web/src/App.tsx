@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import {
-  ArrowLeft, ArrowLeftRight, BadgeCheck, Blocks, Boxes, ExternalLink, FlaskConical, Gavel, Keyboard, KeyRound, LayoutDashboard, Lock, LogOut, Menu, Monitor, Moon, PlugZap, Search, Send,
+  ArrowLeft, ArrowLeftRight, BadgeCheck, Blocks, Boxes, ExternalLink, Eye, FlaskConical, Gavel, Keyboard, KeyRound, LayoutDashboard, Lock, LogOut, Menu, Monitor, Moon, PlugZap, Search, Send,
   ShieldCheck, Sun, TerminalSquare, Wallet,
 } from "lucide-react";
 import { getAdminToken, setAdminToken } from "./api.ts";
@@ -197,6 +197,7 @@ function Shell() {
       <div className="main">
         <TopBar onMenu={() => setMenu(true)} onSearch={() => setPalette(true)} />
         <main id="main" tabIndex={-1} style={{ outline: "none" }}>
+          <DemoBanner />
           <Suspense fallback={<div className="page"><Loading /></div>}>
           <Routes>
             <Route path="/dashboard" element={<Overview />} />
@@ -235,6 +236,24 @@ function Shell() {
           </div>
         </Modal>
       )}
+    </div>
+  );
+}
+
+/** Shown to visitors who aren't signed in when the server runs as a public demo (DASHBOARD_ACCESS=public), so they know whose data this is. */
+function DemoBanner() {
+  const h = useHealth();
+  const auth = useAuth();
+  const hasToken = useHasToken();
+  if (h.access !== "public" || auth.loading || auth.user || hasToken) return null;
+  return (
+    <div className="demo-banner callout blue" role="note">
+      <Eye size={18} color="var(--accent)" aria-hidden />
+      <div>
+        <b>Public demo. No sign-in needed.</b> This is the creator's own Upstream space, open to everyone: real Claude Code sessions, Muse Spark reviews and
+        payouts on the PayPal sandbox, so no real money. It's read-only, so nothing here can be changed.
+      </div>
+      {auth.available && <a className="btn sm" href="/api/auth/github/start"><BrandIcon name="github" size={14} mono />Sign in for your own space</a>}
     </div>
   );
 }

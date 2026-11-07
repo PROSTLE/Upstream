@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="https://upstream-vvua.onrender.com"><b>Live app</b></a> ·
+  <a href="https://upstream-vvua.onrender.com/dashboard">Live demo, no sign-in</a> ·
   <a href="#try-it-in-two-minutes">Try it in two minutes</a> ·
   <a href="#how-paypal-is-used">How PayPal is used</a> ·
   <a href="#how-it-works">How it works</a> ·
@@ -530,10 +531,11 @@ You shouldn't have to take any of this on faith, so the app checks itself in pub
 
 The live app is at **https://upstream-vvua.onrender.com**. It's on the PayPal sandbox, so no real money moves. The sandbox buyer login is in the Devpost testing notes.
 
-1. **`/check`.** Drop a Claude Code session file, and see what a dependency list declares against what the agent actually relied on. No sign-in, no PayPal, deleted after 24 hours.
-2. **Sign in with GitHub.** You get your own empty space, with one clear next step.
-3. **Money records → Replay → Everything.** Watch the real sandbox payout move through the diagram, event by event.
-4. **Pay maintainers.** Open the payout and read its policy checks.
+1. **See the live demo.** On the home page, click *See the live demo*, or open [/dashboard](https://upstream-vvua.onrender.com/dashboard). No sign-in is needed. It's the creator's own space, read-only: real Claude Code sessions, Muse Spark reviews and sandbox payouts.
+2. **Money records → Replay → Everything.** Watch the real sandbox payout move through the diagram, event by event. The Money timeline and the PayPal API log are on the same page.
+3. **Pay maintainers.** Open the payout and read its policy checks.
+4. **`/check`.** Drop a Claude Code session file, and see what a dependency list declares against what the agent actually relied on. No sign-in, no PayPal, deleted after 24 hours.
+5. **Sign in with GitHub.** You get your own empty space, with one clear next step.
 
 **In about 15 minutes, end to end** (you need Claude Code and a PayPal sandbox personal account):
 

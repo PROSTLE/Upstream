@@ -26,9 +26,10 @@ services:
         generateValue: true
       - key: INGEST_TOKEN
         generateValue: true
-      # private: the dashboard needs ADMIN_TOKEN to read (give judges the token in the testing notes).
+      # public: visitors who aren't signed in can read the operator's space as a read-only demo (raw hook payloads and
+      # every action still need sign-in). private: they're sent to the home page.
       - key: DASHBOARD_ACCESS
-        value: private
+        value: public
       - key: PAYPAL_ENV
         value: sandbox
       - key: PAYPAL_CLIENT_ID
