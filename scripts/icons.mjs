@@ -11,28 +11,29 @@ import { Resvg } from "@resvg/resvg-js";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const out = path.join(root, "web", "public");
 
-// The mark on a 32-unit grid: an arrow rising out of two streams ("upstream").
-const MARK = [
-  { d: "M8 22c3.2-1.4 4.6-4.4 8-4.4s4.8 3 8 4.4", opacity: 0.55 },
-  { d: "M8 16.5c3.2-1.4 4.6-4.4 8-4.4s4.8 3 8 4.4", opacity: 1 },
-  { d: "M16 6.5v5.6M13.3 9l2.7-2.7L18.7 9", opacity: 1 },
-];
+// The mark on a 32-unit grid: a salmon leaping out of the current, swimming upstream to where the work came from.
+// Three flat colours and no gradients. web/src/ui.tsx draws the same shapes for the in-app logo.
+export const COLORS = { ink: "#14233f", salmon: "#f2795b", water: "#f4efe3" };
+const FISH = [
+  // Body, drawn level and facing right, then turned 35 degrees to leap up and to the right.
+  `<path d="M26.6 16C22.8 11.7 15.2 11.6 10.6 16c4.6 4.4 12.2 4.3 16 0Z" fill="${COLORS.salmon}"/>`,
+  // Forked tail.
+  `<path d="M11.4 16 5.6 11.9l1.9 4.1-1.9 4.1Z" fill="${COLORS.salmon}"/>`,
+  `<circle cx="23.1" cy="15.2" r=".95" fill="${COLORS.ink}"/>`,
+].join("");
+const CURRENT = "M5.5 26.4c1.6-1.3 3.3-1.3 4.9 0s3.3 1.3 4.9 0 3.3-1.3 4.9 0 3.3 1.3 4.9 0";
 
 /**
  * shape "rounded": the in-app tile. shape "square": full bleed, for platforms that apply their own mask
- * (iOS home screen, Android maskable icons). The mark's farthest point, stroke caps included, is about 11 units from the centre
- * (35% of the width), inside the maskable safe zone: a circle with a radius of 40% of the width (web.dev/articles/maskable-icon).
- * Small sizes get a thicker stroke so the lines stay crisp at 16 to 32 px.
+ * (iOS home screen, Android maskable icons). The current's outer ends are the mark's farthest points, about 15.8 units
+ * from the centre, so the maskable icon scales the mark to 0.78 to keep it inside the safe zone: a circle with a radius
+ * of 40% of the width (web.dev/articles/maskable-icon). Small sizes get a thicker current so it stays crisp at 16 to 32 px.
  */
-function svg({ shape = "rounded", scale = 1, stroke = 2.2 } = {}) {
+function svg({ shape = "rounded", scale = 1, current = 2.1 } = {}) {
   const offset = 16 - 16 * scale;
-  // The mark's ink spans y 6.3 to 23.1, so it is lowered 1.3 units to sit on the optical centre.
-  const lift = 1.3 * scale;
-  const tile = shape === "rounded" ? `<rect width="32" height="32" rx="9" fill="url(#g)"/>` : `<rect width="32" height="32" fill="url(#g)"/>`;
-  const paths = MARK.map(
-    (p) => `<path d="${p.d}" fill="none" stroke="#fff" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round"${p.opacity < 1 ? ` opacity="${p.opacity}"` : ""}/>`,
-  ).join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><defs><linearGradient id="g" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#2f5bea"/><stop offset="1" stop-color="#11a39c"/></linearGradient></defs>${tile}<g transform="translate(${offset} ${offset + lift}) scale(${scale})">${paths}</g></svg>`;
+  const tile = `<rect width="32" height="32"${shape === "rounded" ? ` rx="8"` : ""} fill="${COLORS.ink}"/>`;
+  const mark = `<g transform="translate(.6 -2.4) rotate(-35 16 16)">${FISH}</g><path d="${CURRENT}" fill="none" stroke="${COLORS.water}" stroke-width="${current}" stroke-linecap="round"/>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">${tile}<g transform="translate(${offset} ${offset}) scale(${scale})">${mark}</g></svg>`;
 }
 
 function png(file, size, opts) {
@@ -42,10 +43,14 @@ function png(file, size, opts) {
 }
 
 fs.mkdirSync(out, { recursive: true });
-fs.writeFileSync(path.join(out, "favicon.svg"), svg({ stroke: 2.5 }) + "\n");
+fs.writeFileSync(path.join(out, "favicon.svg"), svg({ current: 2.4 }) + "\n");
 console.log("favicon.svg                vector");
-png("favicon-32.png", 32, { stroke: 2.6 });
-png("apple-touch-icon.png", 180, { shape: "square" });
+png("favicon-32.png", 32, { current: 2.6 });
+png("apple-touch-icon.png", 180, { shape: "square", scale: 0.9 });
 png("icon-192.png", 192, {});
 png("icon-512.png", 512, {});
-png("icon-maskable-512.png", 512, { shape: "square", scale: 0.9 });
+png("icon-maskable-512.png", 512, { shape: "square", scale: 0.78 });
+// The README's header and the GitHub social preview use the large rounded mark.
+fs.mkdirSync(path.join(root, "docs"), { recursive: true });
+fs.writeFileSync(path.join(root, "docs", "logo.svg"), svg() + "\n");
+console.log("docs/logo.svg              vector");

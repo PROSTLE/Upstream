@@ -9,23 +9,17 @@ import { registerTokenPrompt, setAdminToken } from "./api.ts";
 
 // ---------- brand ----------
 
+/** A salmon leaping out of the current. Same shapes and colours as scripts/icons.mjs, which renders the favicon and app icons. */
 export function Logo({ size = 30 }: { size?: number }) {
-  const id = useId();
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
-      <defs>
-        <linearGradient id={id} x1="0" y1="1" x2="1" y2="0">
-          <stop offset="0" stopColor="#2f5bea" />
-          <stop offset="1" stopColor="#11a39c" />
-        </linearGradient>
-      </defs>
-      <rect width="32" height="32" rx="9" fill={`url(#${CSS.escape(id)})`} />
-      {/* Same geometry as scripts/icons.mjs, which renders the favicon and app icons. */}
-      <g transform="translate(0 1.3)">
-        <path d="M8 22c3.2-1.4 4.6-4.4 8-4.4s4.8 3 8 4.4" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" opacity=".55" />
-        <path d="M8 16.5c3.2-1.4 4.6-4.4 8-4.4s4.8 3 8 4.4" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" />
-        <path d="M16 6.5v5.6M13.3 9l2.7-2.7L18.7 9" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+      <rect width="32" height="32" rx="8" fill="#14233f" />
+      <g transform="translate(.6 -2.4) rotate(-35 16 16)">
+        <path d="M26.6 16C22.8 11.7 15.2 11.6 10.6 16c4.6 4.4 12.2 4.3 16 0Z" fill="#f2795b" />
+        <path d="M11.4 16 5.6 11.9l1.9 4.1-1.9 4.1Z" fill="#f2795b" />
+        <circle cx="23.1" cy="15.2" r=".95" fill="#14233f" />
       </g>
+      <path d="M5.5 26.4c1.6-1.3 3.3-1.3 4.9 0s3.3 1.3 4.9 0 3.3-1.3 4.9 0 3.3 1.3 4.9 0" fill="none" stroke="#f4efe3" strokeWidth={size <= 24 ? 2.5 : 2.1} strokeLinecap="round" />
     </svg>
   );
 }
