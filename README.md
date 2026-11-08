@@ -55,6 +55,10 @@ Real screens from the sandbox run [below](#how-it-works).
     <td valign="top"><img src="docs/screenshots/payout.png" alt="A sent payout with its policy checks"><br><b>A payout.</b> The PayPal batch, the policy checks run before calling PayPal, and the share held for an unclaimed repo.</td>
     <td valign="top"><img src="docs/screenshots/money-records.png" alt="Money records"><br><b>Money records.</b> Every PayPal-confirmed movement, the money timeline, the ledger and every PayPal API call.</td>
   </tr>
+  <tr>
+    <td valign="top"><img src="docs/screenshots/insights.png" alt="The Insights board, built on AG Studio"><br><b>Insights, built on AG Studio.</b> The money and the attribution on one board. Click a package or a maintainer and everything else filters.</td>
+    <td valign="top"><img src="docs/screenshots/insights-ask-ai.png" alt="Ask AI: Studio's agents build a widget and the ledger auditor checks it"><br><b>Ask AI.</b> A real run: AG Studio's agents on Muse Spark built <i>This month's money</i>, then our ledger auditor checked all four totals against the books.</td>
+  </tr>
 </table>
 
 ---
