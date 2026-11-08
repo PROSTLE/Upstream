@@ -86,6 +86,28 @@ export function Insights() {
     // Studio shows its side panels, the AI one included, in edit mode.
     setMode(open ? "edit" : "view");
   };
+  const collapseAi = () => {
+    const api = apiRef.current;
+    if (!api) return;
+    const state = api.getState();
+    if (!state.panels?.ai?.collapsed) api.setState({ ...state, panels: { ...state.panels, ai: { ...state.panels?.ai, collapsed: true } } });
+  };
+  // Edit layout shows Studio's compose and data panels, but leaves the AI one shut unless Ask AI opened it.
+  // Studio opens its panels as it switches mode, so this runs after the switch.
+  useEffect(() => {
+    if (mode !== "edit" || chatOpen) return;
+    const t = setTimeout(collapseAi, 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, chatOpen]);
+  const toggleEdit = () => {
+    const next = mode === "edit" ? "view" : "edit";
+    if (next === "view" && chatOpen) {
+      collapseAi();
+      setChatOpen(false);
+    }
+    setMode(next);
+  };
   const reset = () => {
     const api = apiRef.current;
     clearTimeout(saveTimer.current);
@@ -127,7 +149,7 @@ export function Insights() {
             <Sparkles size={14} />{chatOpen ? "Close AI" : "Ask AI"}
           </button>
         )}
-        <button className={`btn sm ${mode === "edit" ? "primary" : ""}`} onClick={() => setMode((m) => (m === "edit" ? "view" : "edit"))} aria-pressed={mode === "edit"}>
+        <button className={`btn sm ${mode === "edit" ? "primary" : ""}`} onClick={toggleEdit} aria-pressed={mode === "edit"}>
           {mode === "edit" ? <><LayoutGrid size={14} />Done editing</> : <><Pencil size={14} />Edit layout</>}
         </button>
       </div>

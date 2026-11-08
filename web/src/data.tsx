@@ -144,7 +144,7 @@ export function barCol<T>(headerName: string, field: string, extra: Partial<ColD
       });
       return (
         <span className="grid-bar" title={`${n} of ${max}, the most in this list`}>
-          <span className="track"><span className="fill" style={{ width: max ? `${Math.max(4, (n / max) * 100)}%` : 0 }} /></span>
+          <span className="track"><span className="fill" style={{ width: max && n > 0 ? `${Math.max(4, (n / max) * 100)}%` : 0 }} /></span>
           <span className="num">{n}</span>
         </span>
       );
