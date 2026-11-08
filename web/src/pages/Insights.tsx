@@ -4,9 +4,9 @@
 // only (localStorage) and never sent to the server.
 import "../insights/insights.css";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { enableStudioDevValidations, type AgReportState, type AgStudioApi, type AgStudioMode } from "ag-studio";
+import { AgStudioAiModule, enableStudioDevValidations, type AgReportState, type AgStudioApi, type AgStudioMode } from "ag-studio";
 import { AgStudio, AgStudioProvider } from "ag-studio-react";
-import { LayoutGrid, Pencil, RefreshCw, RotateCcw } from "lucide-react";
+import { LayoutGrid, Pencil, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
 import { useApi } from "../api.ts";
 import { useResolvedTheme } from "../theme.ts";
 import { ErrorBox, PageHead, Skeleton } from "../ui.tsx";
@@ -15,6 +15,7 @@ import { PAGES } from "../insights/defaultReport.ts";
 import report from "../insights/report.json";
 import { DARK_MODE, insightsTheme, LIGHT_MODE } from "../insights/theme.ts";
 import { insightsWidgets } from "../insights/widgets/index.ts";
+import { buildInsightsAi } from "../insights/ai/harness.ts";
 import type { InsightsContext, UpstreamRegistry } from "../insights/widgets/types.ts";
 
 if (import.meta.env.DEV) enableStudioDevValidations();
@@ -53,6 +54,10 @@ export function Insights() {
   const theme = useResolvedTheme();
   const studioData = useMemo(() => (data ? buildStudioData(data) : undefined), [data]);
   const context = useMemo<InsightsContext>(() => ({ currency: data?.currency ?? "USD" }), [data?.currency]);
+  // Studio reads `ai` once, when it is created, and the AI module has to be registered first.
+  const aiOn = Boolean(data?.ai?.enabled);
+  const ai = useMemo(() => (aiOn && data?.ai ? buildInsightsAi(data.ai.model) : undefined), [aiOn, data?.ai?.model]);
+  const modules = useMemo(() => (aiOn ? [AgStudioAiModule] : undefined), [aiOn]);
   const [initialState] = useState(() => savedLayout() ?? DEFAULT_REPORT);
   const [page, setPage] = useState(initialState.selectedPageId);
   const [mode, setMode] = useState<AgStudioMode>("view");
@@ -69,6 +74,17 @@ export function Insights() {
     if (!api) return;
     api.setState({ ...api.getState(), selectedPageId: id });
     setPage(id);
+  };
+  const [chatOpen, setChatOpen] = useState(false);
+  const toggleChat = () => {
+    const api = apiRef.current;
+    if (!api) return;
+    const state = api.getState();
+    const open = !chatOpen;
+    api.setState({ ...state, panels: { ...state.panels, ai: { ...state.panels?.ai, collapsed: !open } } });
+    setChatOpen(open);
+    // Studio shows its side panels, the AI one included, in edit mode.
+    setMode(open ? "edit" : "view");
   };
   const reset = () => {
     const api = apiRef.current;
@@ -103,20 +119,27 @@ export function Insights() {
           ))}
         </div>
         <div className="spacer" />
+        {data && !aiOn && <span className="muted small">AI is off on this demo.</span>}
         {custom && <span className="muted small">Your layout is saved in this browser only.</span>}
         <button className="btn sm" onClick={reset} disabled={!custom} title="Back to the default board"><RotateCcw size={14} />Reset layout</button>
+        {aiOn && (
+          <button className={`btn sm ${chatOpen ? "primary" : ""}`} onClick={() => toggleChat()} aria-pressed={chatOpen} title="Studio's agents, on Muse Spark. They can read the board and build widgets; they can't change data or move money.">
+            <Sparkles size={14} />{chatOpen ? "Close AI" : "Ask AI"}
+          </button>
+        )}
         <button className={`btn sm ${mode === "edit" ? "primary" : ""}`} onClick={() => setMode((m) => (m === "edit" ? "view" : "edit"))} aria-pressed={mode === "edit"}>
           {mode === "edit" ? <><LayoutGrid size={14} />Done editing</> : <><Pencil size={14} />Edit layout</>}
         </button>
       </div>
       <div className="insights-frame ag-theme-mode" data-ag-theme-mode={theme === "dark" ? DARK_MODE : LIGHT_MODE}>
         {studioData ? (
-          <AgStudioProvider licenseKey={LICENSE}>
+          <AgStudioProvider licenseKey={LICENSE} modules={modules}>
             <AgStudio<UpstreamRegistry>
               style={{ height: "100%", width: "100%" }}
               theme={insightsTheme}
               data={studioData}
               widgets={insightsWidgets}
+              ai={ai as never}
               initialState={initialState}
               context={context}
               mode={mode}
@@ -132,6 +155,8 @@ export function Insights() {
               }}
               onStateUpdated={(e) => {
                 if (e.state.selectedPageId !== page) setPage(e.state.selectedPageId);
+                const ai = e.state.panels?.ai;
+                if (ai && Boolean(!ai.collapsed) !== chatOpen) setChatOpen(!ai.collapsed);
                 // Only a change to the board itself (widgets, layout, filters) counts as the visitor's layout;
                 // switching pages doesn't, and neither does the reset this page made itself.
                 if (!e.durable) return;

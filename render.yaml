@@ -54,6 +54,13 @@ services:
         value: "100"
       - key: PUBLIC_CHECK_MAX_PER_IP_PER_HOUR
         value: "5"
+      # Insights' agents on Muse Spark. Off until set to true in the dashboard.
+      - key: STUDIO_AI_ENABLED
+        sync: false
+      - key: STUDIO_AI_MAX_PER_IP_PER_HOUR
+        value: "20"
+      - key: STUDIO_AI_MAX_PER_DAY
+        value: "300"
       - key: MODEL_API_BASE
         value: https://api.meta.ai
       - key: UPSTREAM_MODEL

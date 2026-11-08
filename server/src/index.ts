@@ -37,6 +37,7 @@ import { currentSubscription, startSubscription, syncSubscription } from "./fund
 import { ledgerEntries, poolSummary } from "./ledger.ts";
 import { studioData } from "./studio/data.ts";
 import { ledgerTotals } from "./studio/totals.ts";
+import { StudioAiLimiter, studioLlmHandler } from "./studio/llm.ts";
 import { PayPalError, PayPalNotConfigured, runAsUser } from "./paypal/client.ts";
 import { ensureProductAndPlan, activePlanId } from "./paypal/subscriptions.ts";
 import { issueStatement, listStatements } from "./paypal/statements.ts";
@@ -758,7 +759,19 @@ const sseEvent = (e: { id: number }) => `id: ${e.id}\nevent: money\ndata: ${JSON
 // A stream of this person's money events. The backlog comes first, then "hello" with the current numbers, then events as they commit.
 // ---------- Insights (AG Studio) ----------
 // Read-only, scoped like /api/ledger: a signed-out visitor of the public demo sees the operator's space.
-app.get("/api/studio/data", memberRead, (req, res) => res.json(studioData(scope(req))));
+app.get("/api/studio/data", memberRead, (req, res) =>
+  res.json({ ...studioData(scope(req)), ai: { enabled: config.STUDIO_AI_ENABLED && Boolean(config.MODEL_API_KEY), model: config.UPSTREAM_MODEL } }),
+);
+// Insights' agents. They can rearrange the board in the visitor's browser; every tool that touches Upstream only reads
+// (the ledger totals and the safety checks). None can move money, approve a settlement or write to the database.
+const studioAi = new StudioAiLimiter({
+  perIpPerHour: config.STUDIO_AI_MAX_PER_IP_PER_HOUR,
+  perDay: config.STUDIO_AI_MAX_PER_DAY,
+  callsPerPrompt: config.STUDIO_AI_MAX_CALLS_PER_PROMPT,
+});
+const aiIp = (req: Request) => hashIp(req.ip ?? "");
+app.post("/api/studio/llm/responses", memberRead, studioLlmHandler(studioAi, aiIp));
+app.post("/api/studio/llm/delegate/responses", memberRead, studioLlmHandler(studioAi, aiIp, { delegate: true }));
 app.get("/api/studio/totals", memberRead, (req, res) => {
   const q = (k: string) => (typeof req.query[k] === "string" && req.query[k] ? String(req.query[k]) : null);
   try {

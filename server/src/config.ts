@@ -72,6 +72,13 @@ const schema = z.object({
   PUBLIC_CHECK_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
   PUBLIC_CHECK_MAX_PER_DAY: z.coerce.number().int().nonnegative().default(100),
   PUBLIC_CHECK_MAX_PER_IP_PER_HOUR: z.coerce.number().int().nonnegative().default(5),
+  // Insights' AG Studio agents, which run on the same Model API key through /api/studio/llm. Off unless turned on.
+  // Prompts are the messages a person sends; one prompt takes several model calls (plan, build, hand off, audit).
+  STUDIO_AI_ENABLED: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+  STUDIO_AI_MAX_PER_IP_PER_HOUR: z.coerce.number().int().nonnegative().default(20),
+  STUDIO_AI_MAX_PER_DAY: z.coerce.number().int().nonnegative().default(300),
+  STUDIO_AI_MAX_CALLS_PER_PROMPT: z.coerce.number().int().positive().default(40),
+  STUDIO_AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(16).default(8000),
   MODEL_API_BASE: z.string().url(),
   UPSTREAM_MODEL: z.string().min(1),
   UPSTREAM_EFFORT: z.enum(["low", "medium", "high", "xhigh"]),

@@ -9,6 +9,6 @@ export default defineConfig({
     port: 5173,
     proxy: { "/api": { target: `http://localhost:${process.env.PORT ?? 8787}`, changeOrigin: false } },
   },
-  // AG Studio is one large chunk, fetched only on /insights.
-  build: { outDir: "dist", chunkSizeWarningLimit: 4200 },
+  // AG Studio (with its AI module) is one large chunk, fetched only on /insights.
+  build: { outDir: "dist", chunkSizeWarningLimit: 4400 },
 });

@@ -98,7 +98,7 @@ export function BuiltWith() {
         </div>
       </Card>
 
-      <Card title="AG Studio: the Insights board" sub="Embedded analytics by AG Grid, with two widgets of our own" icon={<ChartNoAxesCombined size={17} />} tone="teal">
+      <Card title="AG Studio: the Insights board" sub="Embedded analytics by AG Grid, with two widgets and an agent of our own" icon={<ChartNoAxesCombined size={17} />} tone="teal">
         <div className="stack">
           <p>
             <b>Insights</b> puts the money and the attribution on one board. Its data comes from this server's own records through{" "}
@@ -109,6 +109,12 @@ export function BuiltWith() {
             Two widgets are ours. <b>Declared vs used</b> puts what an equal split of the dependency list would pay each package beside what Upstream pays it
             from evidence, and tags packages the list pays but the agent never used. <b>Money trail</b> shows each maintainer's money as held, sent and paid,
             with PayPal's own status. Click either and the whole board filters. Both describe themselves to Studio's agents.
+          </p>
+          <p>
+            <b>Ask AI</b> runs AG Studio's own agents on Muse Spark, plus a <b>ledger auditor</b> of ours. Whenever the lead builds a widget that shows money,
+            the auditor reads the widget, checks it against Upstream's books and safety checks, and answers <i>Matches the ledger</i> or <i>Mismatch</i> with
+            both numbers. The agents run in the browser and reach Meta through this server, which holds the key and limits each visitor to 20 questions an
+            hour. Every tool that touches Upstream only reads: no agent can move money, approve a settlement or write to the database.
           </p>
           <p className="muted small">
             Themed from the app's own colours, fonts and chart palette, light and dark. Visitors can rearrange the board; the layout stays in their browser.

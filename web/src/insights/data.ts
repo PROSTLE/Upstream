@@ -8,6 +8,8 @@ import type { UpstreamRegistry } from "./widgets/types.ts";
 export interface StudioPayload {
   generatedAt: string;
   currency: string;
+  /** Whether this server runs Insights' agents, and on which model. */
+  ai?: { enabled: boolean; model: string };
   sources: {
     sessions: { id: string; project: string; started_at: string; ended_at: string | null; status: string; evidence_count: number; packages_used: number }[];
     shares: { session_id: string; ecosystem: string; package: string; method: "llm" | "imports" | "manifest"; share: number; in_manifest: boolean; has_evidence: boolean; comparable: boolean }[];
