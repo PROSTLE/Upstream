@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <a href="https://youtu.be/TFapDKT5rm8"><b>Demo video</b></a> ·
   <a href="https://upstream-vvua.onrender.com/dashboard"><b>Live demo, no sign-in</b></a> ·
   <a href="#try-it">Try it</a> ·
   <a href="#how-paypal-is-used">How PayPal is used</a> ·
@@ -17,6 +18,13 @@
 </p>
 
 > Built for *Build What's Next with PayPal and AI* (Devpost, 2026). Everything runs on the PayPal sandbox, so no real money moves. MIT licensed.
+
+## Demo video
+
+<p align="center">
+  <a href="https://youtu.be/TFapDKT5rm8"><img src="https://i.ytimg.com/vi/TFapDKT5rm8/hqdefault.jpg" width="560" alt="Upstream demo video on YouTube"></a><br>
+  <a href="https://youtu.be/TFapDKT5rm8"><b>Watch the demo video (2:55)</b></a>: a real Claude Code session, the payout it leads to, and the Insights board.
+</p>
 
 ---
 
