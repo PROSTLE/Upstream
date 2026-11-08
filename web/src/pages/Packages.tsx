@@ -10,7 +10,7 @@ import { useOverview } from "../overview.tsx";
 import { TrailDrawer } from "../trail.tsx";
 import { useBrand } from "../brand.tsx";
 import { ActionButton, BrandIcon, Card, EcoIcon, Empty, ErrorBox, Loading, PageHead, Stat, Status, useCopy, useToast } from "../ui.tsx";
-import { Grid } from "../data.tsx";
+import { Grid, moneyCol } from "../data.tsx";
 
 function Provenance({ value }: { value: string | null }) {
   if (!value) return <span className="faint">—</span>;
@@ -104,9 +104,9 @@ export function Packages() {
           <Status value="pending" label="Unclaimed" />
         ),
     },
-    { headerName: "Held", field: "reserved", maxWidth: 120, type: "numericColumn", cellClass: "num", valueFormatter: (p) => moneyStr(p.value, p.data.currency) },
-    { headerName: "In flight", field: "in_flight", maxWidth: 120, type: "numericColumn", cellClass: "num", valueFormatter: (p) => moneyStr(p.value, p.data.currency) },
-    { headerName: "Paid", field: "paid", maxWidth: 120, type: "numericColumn", cellClass: "num", valueFormatter: (p) => moneyStr(p.value, p.data.currency) },
+    moneyCol("Held", "reserved", (r: any) => r.currency, { maxWidth: 120 }),
+    moneyCol("In flight", "in_flight", (r: any) => r.currency, { maxWidth: 120 }),
+    moneyCol("Paid", "paid", (r: any) => r.currency, { maxWidth: 120 }),
     {
       headerName: "",
       colId: "actions",
@@ -192,7 +192,7 @@ export function Packages() {
             Packages appear once a session is attributed. {brand} then resolves each one to its source repository and funding links.
           </Empty>
         ) : (
-          <Grid rows={data} columns={cols} height={600} getRowId={(r) => `${r.ecosystem}:${r.name}`} onRowClick={(r) => r.repo && setTrail(r.repo)} />
+          <Grid name="maintainers" rows={data} columns={cols} height={600} getRowId={(r) => `${r.ecosystem}:${r.name}`} onRowClick={(r) => r.repo && setTrail(r.repo)} />
         )}
       </Card>
       {trail && <TrailDrawer repo={trail} onClose={() => setTrail(null)} />}

@@ -7,7 +7,7 @@ import { ago, dateTime, duration, plural } from "../format.ts";
 import { chunkEvents, describeStats, transcriptToEvents } from "../transcript.ts";
 import { useBrand } from "../brand.tsx";
 import { Card, DropZone, Empty, ErrorBox, Loading, Modal, PackageChip, PageHead, Status } from "../ui.tsx";
-import { Grid } from "../data.tsx";
+import { barCol, Grid, statusCol } from "../data.tsx";
 
 // The server accepts 10 MB per request; a long session is sent in several requests.
 const UPLOAD_CHUNK_BYTES = 8_000_000;
@@ -120,11 +120,11 @@ export function Sessions() {
         </span>
       ),
     },
-    { headerName: "Status", field: "status", maxWidth: 140, cellRenderer: (p: any) => <Status value={p.value} live={p.value === "open"} /> },
+    statusCol("Status", "status", { maxWidth: 140, live: (v) => v === "open" }),
     { headerName: "Started", field: "started_at", valueFormatter: (p) => dateTime(p.value), sort: "desc", maxWidth: 160 },
     { headerName: "Length", valueGetter: (p) => duration(p.data.started_at, p.data.ended_at ?? p.data.last_event_at), maxWidth: 110 },
     { headerName: "Tool events", field: "event_count", maxWidth: 120, type: "numericColumn" },
-    { headerName: "Evidence", field: "evidence_count", maxWidth: 110, type: "numericColumn" },
+    barCol("Evidence", "evidence_count", { maxWidth: 150 }),
     {
       headerName: "Credited packages",
       field: "top",
@@ -178,7 +178,7 @@ export function Sessions() {
               <input className="input" style={{ paddingLeft: 34, minHeight: 36 }} placeholder="Project, package or id" value={q} onChange={(e) => setQ(e.target.value)} />
             </label>
           </div>
-          <Grid rows={rows} columns={cols} height={560} onRowClick={(r) => nav(`/sessions/${r.id}`)} getRowId={(r) => r.id} empty="No sessions match this filter" />
+          <Grid name="sessions" rows={rows} columns={cols} height={560} onRowClick={(r) => nav(`/sessions/${r.id}`)} getRowId={(r) => r.id} empty="No sessions match this filter" />
         </Card>
       )}
     </div>

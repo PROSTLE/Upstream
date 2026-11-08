@@ -7,7 +7,7 @@ import type { ColDef } from "ag-grid-community";
 import { api, useApi } from "../api.ts";
 import { dateTime, money, moneyStr, pct, shortId, plural } from "../format.ts";
 import { ActionButton, BrandIcon, Card, CheckRow, Empty, ErrorBox, Loading, Modal, PageHead, Status, Stepper, useToast } from "../ui.tsx";
-import { Grid } from "../data.tsx";
+import { Grid, moneyCol, packageCol, statusCol } from "../data.tsx";
 import { BatchFlow } from "../money/MoneyFlow.tsx";
 import { useMoneyRefresh } from "../money/stream.tsx";
 import { TrailDrawer } from "../trail.tsx";
@@ -114,9 +114,9 @@ export function SettlementDetail() {
       ),
     },
     { headerName: "Receiver", field: "receiver", minWidth: 170 },
-    { headerName: "Amount", field: "amount", maxWidth: 130, type: "numericColumn", cellClass: "num", valueFormatter: (p) => moneyStr(p.value, cur) },
-    { headerName: "PayPal status", field: "transaction_status", maxWidth: 160, cellRenderer: (p: any) => <Status value={p.value ?? (s.status === "sent" ? "PENDING" : null)} /> },
-    { headerName: "Fee (PayPal)", field: "fee", maxWidth: 130, type: "numericColumn", cellClass: "num", valueFormatter: (p) => (p.value != null ? moneyStr(p.value, cur) : "—") },
+    moneyCol("Amount", "amount", () => cur, { maxWidth: 130 }),
+    statusCol("PayPal status", "transaction_status", { value: (r: any) => r.transaction_status ?? (s.status === "sent" ? "PENDING" : null) }),
+    moneyCol("Fee (PayPal)", "fee", () => cur, { maxWidth: 130 }),
     { headerName: "Payout item", field: "payout_item_id", maxWidth: 170, cellClass: "mono", valueFormatter: (p) => shortId(p.value, 12) },
     { headerName: "sender_item_id", field: "sender_item_id", minWidth: 200, cellClass: "mono" },
     {
@@ -149,13 +149,13 @@ export function SettlementDetail() {
     },
   ];
   const allocCols: ColDef<any>[] = [
-    { headerName: "Package", field: "package", minWidth: 150 },
+    packageCol("Package", "package", (r: any) => r.ecosystem, { minWidth: 170 }),
     {
       headerName: "Repository", field: "repo", minWidth: 200,
       cellRenderer: (p: any) => p.value ? <button className="btn ghost sm" style={{ paddingLeft: 0 }} title="Why this amount?" onClick={() => setTrail(p.value)}>{p.value.replace("github.com/", "")}<Route size={12} color="var(--muted)" /></button> : "—",
     },
-    { headerName: "Amount", field: "amount", maxWidth: 130, type: "numericColumn", cellClass: "num", valueFormatter: (p) => moneyStr(p.value, cur) },
-    { headerName: "State", field: "status", maxWidth: 140, cellRenderer: (p: any) => <Status value={p.value} /> },
+    moneyCol("Amount", "amount", () => cur, { maxWidth: 130 }),
+    statusCol("State", "status", { maxWidth: 140 }),
     { headerName: "Becomes", field: "target", maxWidth: 120 },
     { headerName: "Held until", field: "expires_at", maxWidth: 150, valueFormatter: (p) => (p.value ? dateTime(p.value) : "—") },
     { headerName: "Sessions", field: "session_ids", valueFormatter: (p) => (p.value ?? []).length },
@@ -262,7 +262,7 @@ export function SettlementDetail() {
 
       <div className="split">
         <Card title="Payout items" sub="One item per verified repository" icon={<Send size={17} />} tone="teal" actions={s.request && <button className="btn ghost sm" onClick={() => setShowRequest(true)}><FileJson size={14} />Request JSON</button>}>
-          {s.items.length ? <Grid rows={s.items} columns={itemCols} height={Math.min(120 + s.items.length * 44, 420)} getRowId={(r) => r.sender_item_id} /> : <Empty icon={<Hourglass size={22} />} title="No payable items">All allocations in this run are held until a maintainer claims the repo.</Empty>}
+          {s.items.length ? <Grid name="payout-items" rows={s.items} columns={itemCols} height={Math.min(120 + s.items.length * 44, 420)} getRowId={(r) => r.sender_item_id} /> : <Empty icon={<Hourglass size={22} />} title="No payable items">All allocations in this run are held until a maintainer claims the repo.</Empty>}
         </Card>
         <Card title="Policy checks" sub="Enforced in code before PayPal is ever called" icon={<ShieldCheck size={17} />} tone="green">
           {checks.map((c: any) => <CheckRow key={c.id} ok={c.ok} label={c.label} detail={c.detail} />)}
@@ -293,7 +293,7 @@ export function SettlementDetail() {
       )}
 
       <Card title="Allocations" sub="Earmarks inside the pool: what this run pays, holds, or carries over" icon={<ListChecks size={17} />}>
-        <Grid rows={s.allocations} columns={allocCols} height={Math.min(120 + s.allocations.length * 44, 460)} getRowId={(r) => r.id} />
+        <Grid name="allocations" rows={s.allocations} columns={allocCols} height={Math.min(120 + s.allocations.length * 44, 460)} getRowId={(r) => r.id} />
       </Card>
 
       {replay && (

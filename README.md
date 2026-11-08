@@ -157,7 +157,7 @@ The live app's [How it's built](https://upstream-vvua.onrender.com/how-its-built
 
 <img src="docs/screenshots/how-its-built.png" alt="The How it's built page">
 
-**AG Grid.** Coding sessions, maintainers, payout items, allocations, the ledger and the API log are AG Grids. The session comparison, money split and AI accuracy are AG Charts. All share one themed wrapper in [`web/src/data.tsx`](web/src/data.tsx), follow light and dark mode, and load only on the pages that use them.
+**AG Grid.** Coding sessions, maintainers, payout items, allocations, the ledger and the API log are AG Grids. The session comparison, money split and AI accuracy are AG Charts. All share one themed wrapper in [`web/src/data.tsx`](web/src/data.tsx), follow light and dark mode, and load only on the pages that use them. Every grid keeps its rows' identity, so when a poll or a PayPal webhook changes a row, the changed money or status cells flash, and a new row flashes whole. Each has a quick filter, an *Export CSV* button, and remembers its column order, widths and sort in your browser. Money uses tabular figures (red below zero; green above it in the ledger), states are pills (held, sent, paid, unclaimed), packages show their ecosystem, and a session's evidence count is drawn as a bar. All of it is AG Grid Community.
 
 **Insights, built on AG Studio.** [`/insights`](https://upstream-vvua.onrender.com/insights) puts the money and the attribution on one AG Studio board, themed to match the app. AG Studio's bundle loads only on that page.
 
