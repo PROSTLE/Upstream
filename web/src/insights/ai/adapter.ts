@@ -1,6 +1,6 @@
 // AG Studio's OpenAI Responses adapter, from the AG Studio docs example (Direct LLM Runner) by way of
-// PayPal's hackathon boilerplate (paypaldev/hackathon-paypal-ag-grid-boilerplate), unchanged below this
-// header so it can be diffed against new releases. It runs in the browser with no key and posts to
+// PayPal's hackathon boilerplate (paypaldev/hackathon-paypal-ag-grid-boilerplate). Below this header it is
+// unchanged except for one marked block (UPSTREAM CHANGE), so it can be diffed against new releases. It runs in the browser with no key and posts to
 // `${endpoint}/responses`: our endpoint is /api/studio/llm, whose server route forwards to Meta's
 // Model API, which serves the same Responses protocol (dev.meta.ai/docs/protocols/responses).
 
@@ -363,7 +363,31 @@ function stripNullsFromToolArgs(argsJson: string): string {
     } catch {
         return argsJson;
     }
-    return JSON.stringify(stripNulls(parsed));
+    return JSON.stringify(stripNulls(unwrapStringifiedJson(parsed)));
+}
+
+// UPSTREAM CHANGE (the only one below the header): Muse Spark sometimes sends a nested argument as a
+// JSON string ("field": "{\"id\": ...}") or an empty optional as the string "null". Studio rejects the
+// call and the agent spends a turn retrying, so both are turned back into what the model meant.
+function unwrapStringifiedJson(value: unknown): unknown {
+    if (typeof value === 'string') {
+        const s = value.trim();
+        if (s === 'null') return null;
+        if ((s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']'))) {
+            try {
+                const inner = JSON.parse(s);
+                if (inner && typeof inner === 'object') return unwrapStringifiedJson(inner);
+            } catch {
+                /* a string that only looks like JSON stays a string */
+            }
+        }
+        return value;
+    }
+    if (Array.isArray(value)) return value.map(unwrapStringifiedJson);
+    if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, unwrapStringifiedJson(v)]));
+    }
+    return value;
 }
 
 function decodeAnnotations(annotations: any[]): any[] {
